@@ -9,7 +9,7 @@ from pgmpy.models import BayesianModel
 pd.set_option('display.max_columns', 500)
 
 
-atts = pd.read_csv('list_attr_celeba.csv')
+atts = pd.read_csv('./data/list_attr_celeba.csv')
 atts = atts[['Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']]
 
 
