@@ -1,0 +1,10 @@
+*.pyc
+*.swo
+*.swn
+*.swm
+*.swp
+results/
+saved_models/
+data_c/
+__pycache__/
+
