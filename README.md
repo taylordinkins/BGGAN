@@ -13,6 +13,7 @@ Bayes Nets are a time-tested way to encode structure and relationships between d
 ## Results
 
 WGAN with ResNet Generator and Discriminator
+
 ![here](images/21k_steps_resnet.png)
 
 It just started training relax. 
