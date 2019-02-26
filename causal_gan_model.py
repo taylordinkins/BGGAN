@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 from pgmpy.models import BayesianModel
+from pgmpy.inference import VariableElimination
 
 pd.set_option('display.max_columns', 500)
 
@@ -23,6 +24,9 @@ graph.add_edges_from([('Young', 'Eyeglasses'), ('Young', 'Bald'), ('Young', 'Mus
 
 graph.fit(atts)
 
-for cpd in graph.get_cpds():
-    print(cpd)
+# for cpd in graph.get_cpds():
+#     print(cpd)
+inf = VariableElimination(graph)
+m_query = inf.query(variables=['Male'], evidence={'Mustache': 1})['Male']
+print(m_query)
 
