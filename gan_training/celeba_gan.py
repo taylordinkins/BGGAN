@@ -72,25 +72,33 @@ class Discriminator(nn.Module):
         for k, v in vars(args).items():
             setattr(self, k, v)
         self.name = 'Discriminator'
-        self.conv1 = nn.Conv2d(3, self.dim, 3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(self.dim, 2*self.dim, 3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(2*self.dim, 4*self.dim, 3, stride=2, padding=1)
+        self.conv1 = nn.Conv2d(3, self.dim, 5, stride=2, padding=0)
+        self.conv2 = nn.Conv2d(self.dim, 2*self.dim, 5, stride=2, padding=0)
+        self.conv3 = nn.Conv2d(2*self.dim, 4*self.dim, 5, stride=2, padding=0)
+        self.conv4 = nn.Conv2d(4*self.dim, 1, 5, stride=1, padding=0, bias=False)
         self.relu = nn.ReLU(inplace=True)
         self.linear1 = nn.Linear(4*4*4*self.dim, 1)
-        self.ln1 = nn.LayerNorm([self.dim, 32, 32])
-        self.ln2 = nn.LayerNorm([self.dim*2, 16, 16])
-        self.ln3 = nn.LayerNorm([self.dim*4, 8, 8])
+        self.ln1 = nn.LayerNorm([self.dim, 30, 30])
+        self.ln2 = nn.LayerNorm([self.dim*2, 13, 13])
+        self.ln3 = nn.LayerNorm([self.dim*4, 5, 5])
+        self.d1 = nn.Dropout(.5)
+        self.d2 = nn.Dropout(.5)
+        self.d3 = nn.Dropout(.5)
 
-    def forward(self, x):
+    def forward(self, x, xn=False):
         # print ('D in: ', x.shape)
         x = x.view(-1, 3, 64, 64)
-        x = self.relu(self.ln1(self.conv1(x)))
-        x = self.relu(self.ln2(self.conv2(x)))
-        x = self.relu(self.ln3(self.conv3(x)))
-        x = x.view(-1, 4*4*4*self.dim)
-        x = self.linear1(x)
+        x = self.d1(self.relu(self.ln1(self.conv1(x))))
+        x = self.d1(self.relu(self.ln2(self.conv2(x))))
+        xx = self.d1(self.relu(self.ln3(self.conv3(x))))
+        #x = x.view(-1, 4*4*4*self.dim)
+        x = self.conv4(xx).view(-1, 1)
         # print ('D out: ', x.shape)
-        return x
+        if xn is False:
+            return x
+        else:
+            print (x.shape, xx.shape)
+            return x, xx
 
 
 def inf_gen(data_gen):
@@ -158,8 +166,9 @@ def train(args):
             d_fake = d_fake.mean()
             d_fake.backward(one, retain_graph=True)
             gp = ops.grad_penalty_3dim(args, netD, data, fake)
+            ct = ops.consistency_term(args, netD, data)
             gp.backward()
-            d_cost = d_fake - d_real + gp
+            d_cost = d_fake - d_real + gp + (2 * ct)
             wasserstein_d = d_real - d_fake
             optimD.step()
 

@@ -77,9 +77,9 @@ def grad_penalty_3dim(args, netD, data, fake):
     return gradient_penalty
 
 
-def consistency_term(args, data, netD, Mtag=0):
-    d1, d_1 = netD(data)
-    d2, d_2 = netD(data)
+def consistency_term(args, netD, data, Mtag=0):
+    d1, d_1 = netD(data, xn=True)
+    d2, d_2 = netD(data, xn=True)
 
     consistency_term = (d1 - d2).norm(2, dim=1) + 0.1 * (d_1 - d_2).norm(2, dim=1) - Mtag
     return consistency_term.mean()
