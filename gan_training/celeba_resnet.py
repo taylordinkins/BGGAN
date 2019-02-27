@@ -33,12 +33,20 @@ def load_args():
     args = parser.parse_args()
     return args
 
+# iterate with attributes
+# have to call datagen.load_celeba_50k_attrs(args)
+def inf_gen_attrs(data_gen):
+    while True:
+        for images, targets, img_attrs in data_gen:
+            images.requires_grad_(True)
+            # images = images.cuda()
+            yield (images, targets, img_attrs)
 
 def inf_gen(data_gen):
     while True:
         for images, targets in data_gen:
             images.requires_grad_(True)
-            images = images.cuda()
+            #images = images.cuda()
             yield (images, targets)
 
 
