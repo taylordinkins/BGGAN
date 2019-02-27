@@ -1,5 +1,6 @@
 # BGGAN
 No idea what this name stands for. Bayesian Gausal Generative Adversarial Networks
+(Bayesian Graph Generative Adversarial Networks - Working title for proposals...)
 
 ## Main Idea
 
