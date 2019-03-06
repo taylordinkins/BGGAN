@@ -7,6 +7,7 @@ import pandas as pd
 from pgmpy.models import BayesianModel
 from pgmpy.inference import VariableElimination
 import warnings
+import random
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 pd.set_option('display.max_columns', 500)
@@ -47,13 +48,49 @@ def graph_inference(graph, targets, evidence):
 
 	return query
 
+def random_evidence(size=3):
+	evidence_vars = []
+	while len(evidence_vars) < size:
+		rand_att = KEEP_ATTS[random.randrange(0, len(KEEP_ATTS))]
+		if rand_att not in evidence_vars:
+			evidence_vars.append(rand_att)
+	evidence = {}
+	for ev in evidence_vars:
+		evidence[ev] = random.randrange(0, 2)
+	return evidence
+
+def evidence_query(targets, values):
+	evidence = {}
+	for i, targ in enumerate(targets):
+		evidence[targ] = values[i]
+	return evidence
+
 def main():
 	graph = create_bayes_net()
-	targets = ['Smiling', 'Male']
-	evidence = {'Young': 1, 'Mouth_Slightly_Open': 1}
-	query = graph_inference(graph, targets, evidence)
 
+	## I'll make this args loading eventually...
+	#evidence = evidence_query(['Young', 'Smiling'], [0, 1])
+
+	# randomize for training!
+	evidence = random_evidence()
+
+	targets = []
+	for val in KEEP_ATTS:
+		if val not in evidence.keys():
+			targets.append(val)
+	query = graph_inference(graph, targets, evidence)
+	df = pd.DataFrame(columns=KEEP_ATTS)
+	for val in KEEP_ATTS:
+		if val not in targets:
+			df.loc[0, val] = 1
+			print val, 1
+		else:
+			df.loc[0, val] = query[val].values[1]
+			print val, query[val].values[1]
 	# Ideally, we do something with the targets, values from here
+	# pass it into the GAN, concat with the noise
+	# hopefully dependencies don't give too much trouble...
+	return df
 
 main()
 
