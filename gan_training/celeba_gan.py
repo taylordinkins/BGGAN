@@ -15,7 +15,6 @@ import ops
 import utils
 import datagen
 
-
 def load_args():
 
     parser = argparse.ArgumentParser(description='param-wgan')
@@ -115,7 +114,7 @@ def inf_gen(data_gen):
     while True:
         for images, targets in data_gen:
             images.requires_grad_(True)
-            images = images.cuda()
+            #images = images.cuda()
             yield (images, targets)
 
 
@@ -136,8 +135,10 @@ def train(args):
     
     torch.manual_seed(8734)
     
-    netG = Generator(args).cuda()
-    netD = Discriminator(args).cuda()
+    #netG = Generator(args).cuda()
+    netG = Generator(args)
+    #netD = Discriminator(args).cuda()
+    netD = Discriminator(args)
     print (netG, netD)
 
     optimG = optim.Adam(netG.parameters(), lr=1e-4, betas=(0.5, 0.9), weight_decay=1e-4)
@@ -153,7 +154,8 @@ def train(args):
     utils.create_if_empty('saved_models/celeba') 
     save_image(reals, 'results/celeba/reals.png') 
 
-    one = torch.tensor(1.).cuda()
+    #one = torch.tensor(1.).cuda()
+    one = torch.tensor(1.)
     mone = one * -1
     total_batches = 0
     
@@ -168,7 +170,8 @@ def train(args):
             netD.zero_grad()
             d_real = netD(data).mean()
             d_real.backward(mone, retain_graph=True)
-            noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+            #noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+            noise = torch.randn(args.batch_size, args.z, requires_grad=True)
             with torch.no_grad():
                 fake = netG(noise)
             fake.requires_grad_(True)
@@ -185,7 +188,8 @@ def train(args):
         for p in netD.parameters():
             p.requires_grad=False
         netG.zero_grad()
-        noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+        #noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+        noise = torch.randn(args.batch_size, args.z, requires_grad=True)
         fake = netG(noise)
         G = netD(fake)
         G = G.mean()
@@ -206,6 +210,6 @@ def train(args):
           
 
 if __name__ == '__main__':
-
+    print("I'm not using cuda, because laptop reasons\n")
     args = load_args()
     train(args)
