@@ -87,20 +87,31 @@ class Discriminator(nn.Module):
         self.d2 = nn.Dropout(.5)
         self.d3 = nn.Dropout(.5)
 
-    def forward(self, x, xn=False):
+        # attr detection stuff
+        self.fdl1 = nn.Linear(4*self.dim, 256)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.fdl2 = nn.Linear(256, 9)
+
+    def forward(self, x, xn=False, fdetect=False):
         # print ('D in: ', x.shape)
         x = x.view(-1, 3, 64, 64)
         x = self.d1(self.relu(self.ln1(self.conv1(x))))
         x = self.d1(self.relu(self.ln2(self.conv2(x))))
         xx = self.d1(self.relu(self.ln3(self.conv3(x))))
         #x = x.view(-1, 4*4*4*self.dim)
-        x = self.conv4(xx).view(-1, 1)
         # print ('D out: ', x.shape)
-        if xn is False:
-            return x
+        if fdetect is False:
+            x = self.conv4(xx).view(-1, 1)
+            if xn is False:
+                return x
+            else:
+                print (x.shape, xx.shape)
+                return x, xx
         else:
-            print (x.shape, xx.shape)
-            return x, xx
+            x = self.bn1(self.relu(self.fdl1(x)))
+            x = self.fdl2(x)
+            return x
+
 
 
 # iterate with attributes
@@ -136,14 +147,18 @@ def weights_init(m):
 
 def get_marginals(graph, batch_size):
     df = pd.DataFrame(columns=bayes_net.KEEP_ATTS)
-    for i in range(batch_size):
-        evidence = bayes_net.random_evidence()
+    
+    # only need to generate one set of random evidence per batch
+    evidence = bayes_net.random_evidence()
 
-        targets = []
-        for val in bayes_net.KEEP_ATTS:
-            if val not in evidence.keys():
-                targets.append(val)
-        query = bayes_net.graph_inference(graph, targets, evidence)
+    targets = []
+    for val in bayes_net.KEEP_ATTS:
+        if val not in evidence.keys():
+            targets.append(val)
+    query = bayes_net.graph_inference(graph, targets, evidence)
+
+    # just repeat it for the entire batch, since we want to pass the same evidence in
+    for i in range(batch_size):
         for val in bayes_net.KEEP_ATTS:
             if val not in targets:
                 df.loc[i, val] = 1
@@ -151,8 +166,7 @@ def get_marginals(graph, batch_size):
             else:
                 df.loc[i, val] = query[val].values[1]
                 #print(val, query[val].values[1])
-        # Ideally, we do something with the targets, values from here
-        # pass it into the GAN, concat with the noise
+        
     df = df.apply(pd.to_numeric, downcast='float', errors='coerce')
     return df.values
 
@@ -170,6 +184,13 @@ def train(args):
 
     optimG = optim.Adam(netG.parameters(), lr=1e-4, betas=(0.5, 0.9), weight_decay=1e-4)
     optimD = optim.Adam(netD.parameters(), lr=1e-4, betas=(0.5, 0.9), weight_decay=1e-4)
+
+    # mseloss for penalizing the generator distribution versus the evidence
+    # call on mean of batch of fakes
+    mseloss = nn.MSELoss()
+    # bceloss for attribute detection on reals
+    # don't call BCE on fakes
+    bceloss = nn.BCEWithLogitsLoss()
     
     celeba_train = datagen.load_celeba_50k(args)
     train = inf_gen(celeba_train)
