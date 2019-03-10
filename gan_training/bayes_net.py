@@ -14,7 +14,7 @@ pd.set_option('display.max_columns', 500)
 KEEP_ATTS = ['Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
 
 def create_bayes_net():
-	atts = pd.read_csv('./data/list_attr_celeba.csv')
+	atts = pd.read_csv('../data/list_attr_celeba.csv')
 	atts = atts[KEEP_ATTS]
 	graph = BayesianModel()
 	graph.add_nodes_from(atts.columns)
@@ -42,9 +42,9 @@ def graph_inference(graph, targets, evidence):
 	inf = VariableElimination(graph)
 	query = inf.query(variables=targets, evidence=evidence)
 	
-	for t in targets:
-		print(query[t])
-		print(query[t].variables, query[t].values)
+	# for t in targets:
+	# 	print(query[t])
+	# 	print(query[t].variables, query[t].values)
 
 	return query
 
@@ -83,15 +83,15 @@ def main():
 	for val in KEEP_ATTS:
 		if val not in targets:
 			df.loc[0, val] = 1
-			print val, 1
+			print(val, 1)
 		else:
 			df.loc[0, val] = query[val].values[1]
-			print val, query[val].values[1]
+			print(val, query[val].values[1])
 	# Ideally, we do something with the targets, values from here
 	# pass it into the GAN, concat with the noise
 	# hopefully dependencies don't give too much trouble...
 	return df
 
-main()
+#main()
 
 

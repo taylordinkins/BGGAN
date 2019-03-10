@@ -39,14 +39,14 @@ def inf_gen_attrs(data_gen):
     while True:
         for images, targets, img_attrs in data_gen:
             images.requires_grad_(True)
-            # images = images.cuda()
+            images = images.cuda()
             yield (images, targets, img_attrs)
 
 def inf_gen(data_gen):
     while True:
         for images, targets in data_gen:
             images.requires_grad_(True)
-            #images = images.cuda()
+            images = images.cuda()
             yield (images, targets)
 
 
@@ -127,16 +127,18 @@ def train(args):
         g_cost = -G
         optimG.step()
        
-        if iter % 100 == 0:
+        if iter % 5 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
-        if iter % 500 == 0:
+            print('')
+        if iter % 50 == 0:
             val_d_costs = []
-            path = 'results/celeba_resnet/iter_{}.png'.format(iter)
-            utils.generate_image(args, netG, path)
+            #path = 'results/celeba_resnet/iter_{}.png'.format(iter)
+            #utils.generate_image(args, netG, path)
         if iter % 5000 == 0:
-            utils.save_model('saved_models/celeba_resnet/netG_{}'.format(iter), netG, optimG)
-            utils.save_model('saved_models/celeba_resnet/netD_{}'.format(iter), netD, optimD)
+            print('')
+            #utils.save_model('saved_models/celeba_resnet/netG_{}'.format(iter), netG, optimG)
+            #utils.save_model('saved_models/celeba_resnet/netD_{}'.format(iter), netD, optimD)
           
 
 if __name__ == '__main__':

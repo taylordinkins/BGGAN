@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import numpy as np
+import pandas as pd
 
 import torch
 import torchvision
@@ -14,6 +15,7 @@ from torchvision.utils import save_image
 import ops
 import utils
 import datagen
+import bayes_net
 
 def load_args():
 
@@ -39,7 +41,8 @@ class Generator(nn.Module):
         for k, v in vars(args).items():
             setattr(self, k, v)
         self.name = 'Generator'
-        self.linear1 = nn.Linear(self.z, 4*4*4*self.dim)
+        # add on +9 for the number of attributes
+        self.linear1 = nn.Linear(self.z+9, 4*4*4*self.dim)
         self.conv1 = nn.ConvTranspose2d(4*self.dim, 2*self.dim, 4, stride=2, padding=1)
         self.conv2 = nn.ConvTranspose2d(2*self.dim, 2*self.dim, 4, stride=2, padding=1)
         self.conv3 = nn.ConvTranspose2d(2*self.dim, self.dim, 4, stride=2, padding=1)
@@ -106,7 +109,7 @@ def inf_gen_attrs(data_gen):
     while True:
         for images, targets, img_attrs in data_gen:
             images.requires_grad_(True)
-            # images = images.cuda()
+            images = images.cuda()
             yield (images, targets, img_attrs)
 
 
@@ -114,7 +117,7 @@ def inf_gen(data_gen):
     while True:
         for images, targets in data_gen:
             images.requires_grad_(True)
-            #images = images.cuda()
+            images = images.cuda()
             yield (images, targets)
 
 
@@ -131,15 +134,39 @@ def weights_init(m):
             nn.init.constant_(m.bias, 0.0)
 
 
+def get_marginals(graph, batch_size):
+    df = pd.DataFrame(columns=bayes_net.KEEP_ATTS)
+    for i in range(batch_size):
+        evidence = bayes_net.random_evidence()
+
+        targets = []
+        for val in bayes_net.KEEP_ATTS:
+            if val not in evidence.keys():
+                targets.append(val)
+        query = bayes_net.graph_inference(graph, targets, evidence)
+        for val in bayes_net.KEEP_ATTS:
+            if val not in targets:
+                df.loc[i, val] = 1
+                #print(val, 1)
+            else:
+                df.loc[i, val] = query[val].values[1]
+                #print(val, query[val].values[1])
+        # Ideally, we do something with the targets, values from here
+        # pass it into the GAN, concat with the noise
+    df = df.apply(pd.to_numeric, downcast='float', errors='coerce')
+    return df.values
+
 def train(args):
     
     torch.manual_seed(8734)
     
-    #netG = Generator(args).cuda()
-    netG = Generator(args)
-    #netD = Discriminator(args).cuda()
-    netD = Discriminator(args)
+    netG = Generator(args).cuda()
+    #netG = Generator(args)
+    netD = Discriminator(args).cuda()
+    #netD = Discriminator(args)
     print (netG, netD)
+
+    graph = bayes_net.create_bayes_net()
 
     optimG = optim.Adam(netG.parameters(), lr=1e-4, betas=(0.5, 0.9), weight_decay=1e-4)
     optimD = optim.Adam(netD.parameters(), lr=1e-4, betas=(0.5, 0.9), weight_decay=1e-4)
@@ -154,8 +181,8 @@ def train(args):
     utils.create_if_empty('saved_models/celeba') 
     save_image(reals, 'results/celeba/reals.png') 
 
-    #one = torch.tensor(1.).cuda()
-    one = torch.tensor(1.)
+    one = torch.tensor(1.).cuda()
+    #one = torch.tensor(1.)
     mone = one * -1
     total_batches = 0
     
@@ -170,8 +197,10 @@ def train(args):
             netD.zero_grad()
             d_real = netD(data).mean()
             d_real.backward(mone, retain_graph=True)
-            #noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
-            noise = torch.randn(args.batch_size, args.z, requires_grad=True)
+            noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+            marginals = torch.tensor(get_marginals(graph, args.batch_size), requires_grad=True).cuda()
+            noise = torch.cat((noise, marginals), 1)
+            #noise = torch.randn(args.batch_size, args.z, requires_grad=True)
             with torch.no_grad():
                 fake = netG(noise)
             fake.requires_grad_(True)
@@ -179,7 +208,9 @@ def train(args):
             d_fake = d_fake.mean()
             d_fake.backward(one, retain_graph=True)
             gp = ops.grad_penalty_3dim(args, netD, data, fake)
-            ct = ops.consistency_term(args, netD, data)
+            #ct = ops.consistency_term(args, netD, data)
+            # set it to 0 for now, avoid tensor problems
+            ct = 0
             gp.backward()
             d_cost = d_fake - d_real + gp + (2 * ct)
             wasserstein_d = d_real - d_fake
@@ -188,8 +219,10 @@ def train(args):
         for p in netD.parameters():
             p.requires_grad=False
         netG.zero_grad()
-        #noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
-        noise = torch.randn(args.batch_size, args.z, requires_grad=True)
+        noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+        marginals = torch.tensor(get_marginals(graph, args.batch_size), requires_grad=True).cuda()
+        noise = torch.cat((noise, marginals), 1)
+        #noise = torch.randn(args.batch_size, args.z, requires_grad=True)
         fake = netG(noise)
         G = netD(fake)
         G = G.mean()
@@ -197,19 +230,21 @@ def train(args):
         g_cost = -G
         optimG.step()
        
-        if iter % 100 == 0:
+        if iter % 5 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
+            print('')
         if iter % 500 == 0:
             val_d_costs = []
-            path = 'results/celeba/iter_{}.png'.format(iter)
-            utils.generate_image(args, netG, path)
+            #path = 'results/celeba/iter_{}.png'.format(iter)
+            #utils.generate_image(args, netG, path)
         if iter % 5000 == 0:
-            utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
-            utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
+            print('')
+            #utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
+            #utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
           
 
 if __name__ == '__main__':
-    print("I'm not using cuda, because laptop reasons\n")
+    #print("I'm not using cuda, because laptop reasons\n")
     args = load_args()
     train(args)
