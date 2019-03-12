@@ -44,6 +44,7 @@ class ImageFolderWithPaths(datasets.ImageFolder):
         fname = os.path.basename(path)
         # attributes lookup
         attrs = self.attrs_df[self.attrs_df['FName'] == fname].drop('FName', axis=1).values
+        attrs[attrs==-1] = 0
         # make a new tuple that includes original and the path
         tuple_with_path = (original_tuple + (attrs,))
         return tuple_with_path

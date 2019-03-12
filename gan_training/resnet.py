@@ -206,3 +206,30 @@ class Discriminator(nn.Module):
         output = self.ln1(output)
         output = output.view(-1)
         return output
+
+class AttributeDetector(nn.Module):
+    def __init__(self, args):
+        for k, v in vars(args).items():
+            setattr(self, k, v)
+        super(AttributeDetector, self).__init__()
+        dim = self.dim
+        self.conv1 = MyConvo2d(3, dim, 3, he_init = False)
+        self.rb1 = ResidualBlock(args, dim, 2*dim, 3, resample='down', hw=dim)
+        self.rb2 = ResidualBlock(args, 2*dim, 4*dim, 3, resample='down', hw=dim//2)
+        self.rb3 = ResidualBlock(args, 4*dim, 8*dim, 3, resample='down', hw=dim//4)
+        self.rb4 = ResidualBlock(args, 8*dim, 8*dim, 3, resample='down', hw=dim//8)
+        self.ln1 = nn.Linear(4*4*8*dim, 9)
+
+    def forward(self, input):
+        output = input.contiguous()
+        output = output.view(-1, 3, 64, 64)
+        output = self.conv1(output)
+        output = self.rb1(output)
+        output = self.rb2(output)
+        output = self.rb3(output)
+        output = self.rb4(output)
+        output = output.view(-1, 4*4*8*self.dim)
+        output = self.ln1(output)
+        output = output.view(output.size(0), -1)
+        #print(output.shape)
+        return output

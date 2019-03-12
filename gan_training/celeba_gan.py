@@ -16,6 +16,7 @@ import ops
 import utils
 import datagen
 import bayes_net
+import resnet
 
 def load_args():
 
@@ -29,6 +30,24 @@ def load_args():
     parser.add_argument('--resume', default=False, type=bool)
     parser.add_argument('--exp', default='1', type=str)
     parser.add_argument('--output', default=4096, type=int)
+    parser.add_argument('--dataset', default='celeba', type=str)
+
+    args = parser.parse_args()
+    return args
+
+# maybe I'll clean this up later, maybe not
+def load_args_fdet():
+
+    parser = argparse.ArgumentParser(description='param-wgan')
+    parser.add_argument('--z', default=128, type=int, help='latent space width')
+    parser.add_argument('--dim', default=64, type=int, help='latent space width')
+    parser.add_argument('--l', default=10, type=int, help='latent space width')
+    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--disc_iters', default=5, type=int)
+    parser.add_argument('--epochs', default=200000, type=int)
+    parser.add_argument('--resume', default=False, type=bool)
+    parser.add_argument('--exp', default='1', type=str)
+    parser.add_argument('--output_dim', default=4096, type=int)
     parser.add_argument('--dataset', default='celeba', type=str)
 
     args = parser.parse_args()
@@ -88,9 +107,7 @@ class Discriminator(nn.Module):
         self.d3 = nn.Dropout(.5)
 
         # attr detection stuff
-        self.fdl1 = nn.Linear(4*self.dim, 256)
-        self.bn1 = nn.BatchNorm1d(256)
-        self.fdl2 = nn.Linear(256, 9)
+        self.conv5 = nn.Conv2d(self.dim*4, 9, 5, stride=1, padding=0, bias=False)
 
     def forward(self, x, xn=False, fdetect=False):
         # print ('D in: ', x.shape)
@@ -102,14 +119,15 @@ class Discriminator(nn.Module):
         # print ('D out: ', x.shape)
         if fdetect is False:
             x = self.conv4(xx).view(-1, 1)
+            #print(x.shape)
             if xn is False:
                 return x
             else:
                 print (x.shape, xx.shape)
                 return x, xx
         else:
-            x = self.bn1(self.relu(self.fdl1(x)))
-            x = self.fdl2(x)
+            x = self.conv5(xx).squeeze()
+            #print(x.shape)
             return x
 
 
@@ -121,6 +139,7 @@ def inf_gen_attrs(data_gen):
         for images, targets, img_attrs in data_gen:
             images.requires_grad_(True)
             images = images.cuda()
+            #img_attrs[img_attrs==-1] = 0
             yield (images, targets, img_attrs)
 
 
@@ -178,7 +197,7 @@ def train(args):
     #netG = Generator(args)
     netD = Discriminator(args).cuda()
     #netD = Discriminator(args)
-    print (netG, netD)
+    #print (netG, netD)
 
     graph = bayes_net.create_bayes_net()
 
@@ -188,14 +207,12 @@ def train(args):
     # mseloss for penalizing the generator distribution versus the evidence
     # call on mean of batch of fakes
     mseloss = nn.MSELoss()
-    # bceloss for attribute detection on reals
-    # don't call BCE on fakes
-    bceloss = nn.BCEWithLogitsLoss()
     
-    celeba_train = datagen.load_celeba_50k(args)
-    train = inf_gen(celeba_train)
+    #celeba_train = datagen.load_celeba_50k(args)
+    celeba_train = datagen.load_celeba_50k_attrs(args)
+    train = inf_gen_attrs(celeba_train)
     print ('saving reals')
-    reals, _ = next(train)
+    reals, _, _ = next(train)
     utils.create_if_empty('results') 
     utils.create_if_empty('results/celeba') 
     utils.create_if_empty('saved_models') 
@@ -214,16 +231,18 @@ def train(args):
         for p in netD.parameters():
             p.requires_grad = True
         for _ in range(args.disc_iters):
-            data, targets = next(train)
+            data, targets, targ_attrs = next(train)
             netD.zero_grad()
             d_real = netD(data).mean()
             d_real.backward(mone, retain_graph=True)
+
             noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
             marginals = torch.tensor(get_marginals(graph, args.batch_size), requires_grad=True).cuda()
             noise = torch.cat((noise, marginals), 1)
             #noise = torch.randn(args.batch_size, args.z, requires_grad=True)
             with torch.no_grad():
                 fake = netG(noise)
+                print(fake.shape)
             fake.requires_grad_(True)
             d_fake = netD(fake)
             d_fake = d_fake.mean()
@@ -263,9 +282,55 @@ def train(args):
             print('')
             #utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
             #utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
-          
+
+# train seperately, it was messing up the backprop -_-
+def train_feature_detector(args):
+    torch.manual_seed(8734)
+
+    # just use the resnet, why not
+    fdet = resnet.AttributeDetector(args).cuda()
+    optimF = optim.Adam(fdet.parameters(), lr=1e-4, betas=(0.9, 0.99), weight_decay=1e-5)
+
+    criterion = nn.BCEWithLogitsLoss()
+    celeba_train = datagen.load_celeba_50k_attrs(args)
+    train = inf_gen_attrs(celeba_train)
+
+    total_batches = 0
+
+    print ('==> Begin Training')
+    for iter in range(args.epochs):
+        total_batches += 1
+        fdet.zero_grad()
+        for p in fdet.parameters():
+            p.requires_grad = True
+        data, targets, targ_attrs = next(train)
+        #print(data.shape)
+        targ_attrs = targ_attrs.squeeze().float().cuda()
+        output = fdet(data)
+        loss = criterion(output, targ_attrs)
+        loss.backward()
+       
+        optimF.step()
+
+        if iter % 50 == 0:
+            print('iter: ', iter, 'BCE Loss', loss.cpu().item())
+            print(torch.sigmoid(output[0]), targ_attrs[0])
+            print('')
+        if iter % 500 == 0:
+            val_d_costs = []
+            #path = 'results/celeba/iter_{}.png'.format(iter)
+            #utils.generate_image(args, netG, path)
+        if iter % 5000 == 0:
+            print('')
+            utils.save_model('saved_models/celeba/netFDET_{}'.format(iter), fdet, optimF)
+
+
+
 
 if __name__ == '__main__':
     #print("I'm not using cuda, because laptop reasons\n")
-    args = load_args()
-    train(args)
+    # args = load_args()
+    # train(args)
+
+    args = load_args_fdet()
+    train_feature_detector(args)

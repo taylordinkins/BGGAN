@@ -101,6 +101,7 @@ def train(args):
         for _ in range(args.disc_iters):
             data, targets = next(train)
             netD.zero_grad()
+            #print(data.shape)
             d_real = netD(data).mean()
             d_real.backward(mone, retain_graph=True)
             noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
