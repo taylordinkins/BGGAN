@@ -1,6 +1,7 @@
 from torch import nn
 from torch.autograd import grad
 import torch
+from torch.nn import functional as F
 
 DIM=64
 OUTPUT_DIM=64*64*3
@@ -233,3 +234,50 @@ class AttributeDetector(nn.Module):
         output = output.view(output.size(0), -1)
         #print(output.shape)
         return output
+
+
+# not much of a speed-up, it turns out
+# might as well use the resnet
+class BasicNet(nn.Module):
+    def __init__(self, args):
+        for k, v in vars(args).items():
+            setattr(self, k, v)
+        super(BasicNet, self).__init__()
+        dim = self.dim
+        self.conv1 = nn.Conv2d(3, self.dim, 3, padding=1)
+        self.bnc1 = nn.BatchNorm2d(self.dim)
+        self.conv2 = nn.Conv2d(self.dim, 2*self.dim, 3, padding=1)
+        self.bnc2 = nn.BatchNorm2d(2*self.dim)
+        self.conv3 = nn.Conv2d(2*self.dim, 4*self.dim, 3, padding=1)
+        self.bnc3 = nn.BatchNorm2d(4*self.dim)
+        self.conv4 = nn.Conv2d(4*self.dim, 64, 3, padding=1)
+        self.bnc4 = nn.BatchNorm2d(64)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.fc1 = nn.Linear(64 * 8 * 8 * 4, 2048)
+        self.bn1 = nn.BatchNorm1d(num_features=2048)
+        self.fc3 = nn.Linear(2048, 512)
+        # add batchnorms -> go from scratch = Part 4
+        self.bn3 = nn.BatchNorm1d(num_features=512)
+        self.fc2 = nn.Linear(512, 9)
+
+    def forward(self, x):
+        x = F.relu(self.bnc1(self.conv1(x)))
+        x = F.relu(self.bnc2(self.conv2(x)))
+        x = self.pool(x)
+        x = F.relu(self.bnc3(self.conv3(x)))
+        x = F.relu(self.bnc4(self.conv4(x)))
+        x = self.pool(x)
+        x = x.view(-1, self.num_flat_features(x))
+        x = F.relu(self.fc1(x))
+        x = self.bn1(x)
+        x = F.relu(self.fc3(x))
+        x = self.bn3(x)
+        x = self.fc2(x)
+        return x
+
+    def num_flat_features(self, x):
+        size = x.size()[1:]  # all dimensions except the batch dimension
+        num_features = 1
+        for s in size:
+            num_features *= s
+        return num_features

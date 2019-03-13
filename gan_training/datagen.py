@@ -25,7 +25,7 @@ class ImageFolderWithPaths(datasets.ImageFolder):
     """
     # override the __getitem__ method. this is the method dataloader calls
 
-    def __init__(self, path):
+    def __init__(self, path, attrs_df):
         super(ImageFolderWithPaths, self).__init__(path,
                         transform=transforms.Compose([
                         transforms.CenterCrop((108, 108)),
@@ -34,7 +34,7 @@ class ImageFolderWithPaths(datasets.ImageFolder):
                         transforms.Normalize([.5,.5,.5], [.5,.5,.5])
                         ]))
         # save dataframe for easy access
-        self.attrs_df = get_attrs(ATTR_PATH)
+        self.attrs_df = attrs_df
 
     def __getitem__(self, index):
         # this is what ImageFolder normally returns 
@@ -154,10 +154,15 @@ def load_celeba_50k(args):
 def load_celeba_50k_attrs(args):
     torch.cuda.manual_seed(1)
     kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-    path = 'data_c/'
-    train_img_folder = ImageFolderWithPaths(path)
+    #train_path = 'data_c/'
+    train_path = 'data_c/'
+    train_img_folder = ImageFolderWithPaths(train_path, get_attrs(ATTR_PATH))
     train_loader = torch.utils.data.DataLoader(train_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
-    return train_loader
+
+    test_path = 'data_c_test/'
+    test_img_folder = ImageFolderWithPaths(test_path, get_attrs(ATTR_PATH))
+    test_loader = torch.utils.data.DataLoader(test_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
+    return train_loader, test_loader
 
 
 def load_cifar_hidden(args, c_idx):

@@ -45,7 +45,7 @@ def load_args_fdet():
     parser.add_argument('--l', default=10, type=int, help='latent space width')
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--disc_iters', default=5, type=int)
-    parser.add_argument('--epochs', default=200000, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--resume', default=False, type=bool)
     parser.add_argument('--exp', default='1', type=str)
     parser.add_argument('--output_dim', default=4096, type=int)
@@ -190,6 +190,34 @@ def get_marginals(graph, batch_size):
     df = df.apply(pd.to_numeric, downcast='float', errors='coerce')
     return df.values
 
+def eval_fdet(net, test, args):
+    print('evaluating...\n')
+    test_loss = 0
+    net.eval()
+    with torch.no_grad():
+        t_criterion = nn.BCEWithLogitsLoss()
+
+        # test loss
+        num_batches = 10000//args.batch_size
+        for t_iter in range(num_batches + 1):
+            t_data, _, t_targ_attrs = next(test)
+            t_targ_attrs = t_targ_attrs.squeeze().float().cuda()
+
+            t_output = net(t_data)
+            t_loss = t_criterion(t_output, t_targ_attrs)
+
+            test_loss += t_loss.cpu().item()
+
+            if t_iter % 20 == 0:
+                print('test batch: ', t_iter, 'BCE Loss', t_loss.cpu().item())
+        
+        print('Average test loss', test_loss/num_batches, '\n')
+    net.train()
+
+    return test_loss/num_batches
+
+
+
 def train(args):
     
     torch.manual_seed(8734)
@@ -210,7 +238,7 @@ def train(args):
     mseloss = nn.MSELoss()
     
     #celeba_train = datagen.load_celeba_50k(args)
-    celeba_train = datagen.load_celeba_50k_attrs(args)
+    celeba_train, _ = datagen.load_celeba_50k_attrs(args)
     train = inf_gen_attrs(celeba_train)
     print ('saving reals')
     reals, _, _ = next(train)
@@ -271,7 +299,7 @@ def train(args):
         g_cost = -G
         optimG.step()
        
-        if iter % 5 == 0:
+        if iter % 25 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
             print('')
@@ -284,29 +312,33 @@ def train(args):
             #utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
             #utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
 
-# train seperately, it was messing up the backprop -_-
+# train separately, it was messing up the backprop -_-
 # add validation set?
 def train_feature_detector(args):
     torch.manual_seed(8734)
 
     # just use the resnet, why not
     fdet = resnet.AttributeDetector(args).cuda()
+    #fdet = resnet.BasicNet(args).cuda()
     optimF = optim.Adam(fdet.parameters(), lr=1e-4, betas=(0.9, 0.99), weight_decay=1e-5)
 
     criterion = nn.BCEWithLogitsLoss()
-    celeba_train = datagen.load_celeba_50k_attrs(args)
+    celeba_train, celeba_test = datagen.load_celeba_50k_attrs(args)
     train = inf_gen_attrs(celeba_train)
+    test = inf_gen_attrs(celeba_test)
 
     print ('==> Begin Training Feature Detection')
+    epoch_losses = []
+    mini_batches = int(os.popen('ls ./data_c/val/val | wc -l').read())//args.batch_size
+    best_test_loss = 999999
     for ep in range(args.epochs):
         print('Epoch: ', ep)
         epoch_loss = 0
-        for iter, pack in enumerate(train):
-            data, _, targ_attrs = pack
+        for iter in range(mini_batches):
+            data, _, targ_attrs = next(train)
             fdet.zero_grad()
             for p in fdet.parameters():
                 p.requires_grad = True
-            data, targets, targ_attrs = next(train)
             #print(data.shape)
             targ_attrs = targ_attrs.squeeze().float().cuda()
             output = fdet(data)
@@ -315,18 +347,24 @@ def train_feature_detector(args):
            
             optimF.step()
 
-            epoch_loss += loss
-            epoch_loss = epoch_loss/iter
+            epoch_loss += loss.cpu().item()
             if iter % 50 == 0:
                 print('batch: ', iter, 'BCE Loss', loss.cpu().item())
                 print(torch.round(torch.sigmoid(output[0])).cpu().detach().numpy(), '\n', targ_attrs[0].cpu().detach().numpy())
                 print('')
 
-        print('Avg epoch loss', epoch_loss)
-        if ep % 5 == 0:
-            print('')
-            #tils.save_model('saved_models/celeba/netFDET_{}'.format(iter), fdet, optimF)
-            torch.save(fdet.state_dict(), 'saved_models/celeba/netFDET_{}'.format(ep))
+        print('Average epoch loss', epoch_loss/mini_batches, '\n')
+        epoch_losses.append(epoch_loss/mini_batches)
+        test_loss = eval_fdet(fdet, test, args)
+        
+        if test_loss < best_test_loss:
+            print('Saving Model...\n\n')
+            torch.save(fdet.state_dict(), 'saved_models/celeba/netFDET_{}'.format('best'))
+            best_test_loss = test_loss
+        
+        print('')
+        #tils.save_model('saved_models/celeba/netFDET_{}'.format(iter), fdet, optimF)
+        
 
 
 
