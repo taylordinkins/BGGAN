@@ -306,6 +306,7 @@ def train(args):
         fake = netG(noise)
         #pdb.set_trace()
         G = netD(fake)
+        #print(G)
         G = G.mean()
 
         # detect attributes from fake
@@ -319,10 +320,10 @@ def train(args):
         guessing = torch.tensor([0.5 for x in range(9)]).cuda()
         guessing = guessing.repeat(args.batch_size).view(args.batch_size, 9)
         classif_loss = mseloss(G_atts, guessing)
-
-        dist_coef = math.exp(-(3000/(iter+1)))
-        classif_coef = math.exp(-(3000/(iter+1)))
-        G = G + dist_coef*dist_loss + classif_coef*classif_loss
+        #print(G.cpu().item())
+        dist_coef = 10*math.exp(-(3000/(iter+1)))
+        classif_coef = 10*math.exp(-(3000/(iter+1)))
+        G = G - dist_coef*dist_loss - classif_coef*classif_loss
         #print(G.cpu().item())
         #print(dist_loss.cpu().item())
         #print(G_atts.cpu().detach().numpy())
