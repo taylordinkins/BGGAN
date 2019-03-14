@@ -321,8 +321,8 @@ def train(args):
         guessing = guessing.repeat(args.batch_size).view(args.batch_size, 9)
         classif_loss = mseloss(G_atts, guessing)
         #print(G.cpu().item())
-        dist_coef = 10*math.exp(-(3000/(iter+1)))
-        classif_coef = 10*math.exp(-(3000/(iter+1)))
+        dist_coef = 15*math.exp(-(3000/(iter+1)))
+        classif_coef = 15*math.exp(-(3000/(iter+1)))
         G = G - dist_coef*dist_loss - classif_coef*classif_loss
         #print(G.cpu().item())
         #print(dist_loss.cpu().item())
