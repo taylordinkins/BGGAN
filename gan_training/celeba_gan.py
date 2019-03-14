@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import pdb
+import math
 
 import torch
 import torchvision
@@ -23,7 +24,7 @@ def load_args():
 
     parser = argparse.ArgumentParser(description='param-wgan')
     parser.add_argument('--z', default=128, type=int, help='latent space width')
-    parser.add_argument('--dim', default=128, type=int, help='latent space width')
+    parser.add_argument('--dim', default=64, type=int, help='latent space width')
     parser.add_argument('--l', default=10, type=int, help='latent space width')
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--disc_iters', default=5, type=int)
@@ -45,7 +46,7 @@ def load_args_fdet():
     parser.add_argument('--l', default=10, type=int, help='latent space width')
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--disc_iters', default=5, type=int)
-    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--epochs', default=15, type=int)
     parser.add_argument('--resume', default=False, type=bool)
     parser.add_argument('--exp', default='1', type=str)
     parser.add_argument('--output_dim', default=4096, type=int)
@@ -216,6 +217,16 @@ def eval_fdet(net, test, args):
 
     return test_loss/num_batches
 
+def load_feature_detector(args):
+    print('Loading feature detector...\n')
+    fdet = resnet.AttributeDetector(args).cuda()
+    fdet.load_state_dict(torch.load('saved_models/celeba/netFDET_best_r2'))
+    for p in fdet.parameters():
+            p.requires_grad = False
+    fdet.eval()
+
+    return fdet
+
 
 
 def train(args):
@@ -227,6 +238,7 @@ def train(args):
     netD = Discriminator(args).cuda()
     #netD = Discriminator(args)
     #print (netG, netD)
+    fdet = load_feature_detector(args)
 
     graph = bayes_net.create_bayes_net()
 
@@ -238,10 +250,10 @@ def train(args):
     mseloss = nn.MSELoss()
     
     #celeba_train = datagen.load_celeba_50k(args)
-    celeba_train, _ = datagen.load_celeba_50k_attrs(args)
-    train = inf_gen_attrs(celeba_train)
+    celeba_train = datagen.load_celeba_50k(args)
+    train = inf_gen(celeba_train)
     print ('saving reals')
-    reals, _, _ = next(train)
+    reals, _ = next(train)
     utils.create_if_empty('results') 
     utils.create_if_empty('results/celeba') 
     utils.create_if_empty('saved_models') 
@@ -260,7 +272,7 @@ def train(args):
         for p in netD.parameters():
             p.requires_grad = True
         for _ in range(args.disc_iters):
-            data, targets, _ = next(train)
+            data, targets = next(train)
             netD.zero_grad()
             d_real = netD(data).mean()
             d_real.backward(mone, retain_graph=True)
@@ -295,22 +307,42 @@ def train(args):
         #pdb.set_trace()
         G = netD(fake)
         G = G.mean()
+
+        # detect attributes from fake
+        # do distribution loss
+        G_atts = fdet(fake)
+        G_atts = torch.round(torch.sigmoid(G_atts)).mean(0)
+        dist_loss = mseloss(G_atts, marginals[0])
+
+        # penalize confidence 
+        # classification of attributes
+        guessing = torch.tensor([0.5 for x in range(9)]).cuda()
+        guessing = guessing.repeat(args.batch_size).view(args.batch_size, 9)
+        classif_loss = mseloss(G_atts, guessing)
+
+        dist_coef = math.exp(-(3000/(iter+1)))
+        classif_coef = math.exp(-(3000/(iter+1)))
+        G = G + dist_coef*dist_loss + classif_coef*classif_loss
+        #print(G.cpu().item())
+        #print(dist_loss.cpu().item())
+        #print(G_atts.cpu().detach().numpy())
+        #print(marginals[0].cpu().detach().numpy())
         G.backward(mone)
         g_cost = -G
         optimG.step()
        
-        if iter % 25 == 0:
+        if iter % 5 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
             print('')
         if iter % 500 == 0:
             val_d_costs = []
-            #path = 'results/celeba/iter_{}.png'.format(iter)
-            #utils.generate_image(args, netG, path)
+            path = 'results/celeba/iter_{}.png'.format(iter)
+            utils.generate_image(args, marginals, netG, path)
         if iter % 5000 == 0:
             print('')
-            #utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
-            #utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
+            utils.save_model('saved_models/celeba/netG_{}'.format(iter), netG, optimG)
+            utils.save_model('saved_models/celeba/netD_{}'.format(iter), netD, optimD)
 
 # train separately, it was messing up the backprop -_-
 # add validation set?
@@ -359,11 +391,11 @@ def train_feature_detector(args):
         
         if test_loss < best_test_loss:
             print('Saving Model...\n\n')
-            torch.save(fdet.state_dict(), 'saved_models/celeba/netFDET_{}'.format('best'))
+            # torch.save(fdet.state_dict(), 'saved_models/celeba/netFDET_{}'.format('best_r2'))
             best_test_loss = test_loss
         
         print('')
-        #tils.save_model('saved_models/celeba/netFDET_{}'.format(iter), fdet, optimF)
+        #utils.save_model('saved_models/celeba/netFDET_{}'.format(iter), fdet, optimF)
         
 
 
@@ -371,10 +403,10 @@ def train_feature_detector(args):
 
 if __name__ == '__main__':
     #print("I'm not using cuda, because laptop reasons\n")
-    # args = load_args()
-    # train(args)
+    args = load_args()
+    train(args)
 
     # last file 202599.jpg
     
-    args = load_args_fdet()
-    train_feature_detector(args)
+    # args = load_args_fdet()
+    # train_feature_detector(args)

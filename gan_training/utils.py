@@ -69,9 +69,10 @@ def load_net_only(model, d):
     return model
 
 
-def generate_image(args, netG, path):
+def generate_image(args, marginals, netG, path):
     with torch.no_grad():
         noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+        noise = torch.cat((noise, marginals), 1)
         samples = netG(noise)
     if samples.dim() < 4:
         channels = 1
