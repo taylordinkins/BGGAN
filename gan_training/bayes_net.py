@@ -65,6 +65,29 @@ def evidence_query(targets, values):
 		evidence[targ] = values[i]
 	return evidence
 
+def return_marginals(graph, batch_size, evidence):
+    df = pd.DataFrame(columns=bayes_net.KEEP_ATTS)
+
+    targets = []
+    for val in bayes_net.KEEP_ATTS:
+        if val not in evidence.keys():
+            targets.append(val)
+    query = bayes_net.graph_inference(graph, targets, evidence)
+
+    # just repeat it for the entire batch, since we want to pass the same evidence in
+    for i in range(batch_size):
+        for val in bayes_net.KEEP_ATTS:
+            if val not in targets:
+                df.loc[i, val] = 1
+                print(val, 1)
+            else:
+                df.loc[i, val] = query[val].values[1]
+                print(val, query[val].values[1])
+        
+    df = df.apply(pd.to_numeric, downcast='float', errors='coerce')
+    return df.values
+
+
 def main():
 	graph = create_bayes_net()
 

@@ -37,23 +37,6 @@ def load_args():
     args = parser.parse_args()
     return args
 
-# maybe I'll clean this up later, maybe not
-def load_args_fdet():
-
-    parser = argparse.ArgumentParser(description='param-wgan')
-    parser.add_argument('--z', default=128, type=int, help='latent space width')
-    parser.add_argument('--dim', default=64, type=int, help='latent space width')
-    parser.add_argument('--l', default=10, type=int, help='latent space width')
-    parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--disc_iters', default=5, type=int)
-    parser.add_argument('--epochs', default=15, type=int)
-    parser.add_argument('--resume', default=False, type=bool)
-    parser.add_argument('--exp', default='1', type=str)
-    parser.add_argument('--output_dim', default=4096, type=int)
-    parser.add_argument('--dataset', default='celeba', type=str)
-
-    args = parser.parse_args()
-    return args
 
 
 class Generator(nn.Module):
@@ -309,15 +292,15 @@ def train(args):
         #print(G)
         G = G.mean()
 
-        # detect attributes from fake
-        # do distribution loss
         G_atts = fdet(fake)
-        G_atts = torch.round(torch.sigmoid(G_atts)).mean(0)
-        dist_loss = mseloss(G_atts, marginals[0])
-
         # penalize confidence 
         # classification of attributes
         classif_loss = torch.sum(torch.min(G_atts, 1-G_atts))
+
+        G_atts = torch.round(torch.sigmoid(G_atts)).mean(0)
+        dist_loss = mseloss(G_atts, marginals[0])
+
+        
         #print(G.cpu().item())
         dist_coef = 15*math.exp(-(3500/(iter+1)))
         classif_coef = 10*math.exp(-(3500/(iter+1)))
