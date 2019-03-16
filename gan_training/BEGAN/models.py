@@ -40,11 +40,11 @@ class Generator(nn.Module):
         x = F.elu(x)
         x = x.view(self.batch_size, self.nc, 8, 8)
         x = self.conv_block1(x)
-        F.interpolate(x, scale_factor=2),
+        x = F.interpolate(x, scale_factor=2)
         x = self.conv_block2(x)
-        F.interpolate(x, scale_factor=2),
+        x = F.interpolate(x, scale_factor=2)
         x = self.conv_block3(x)
-        F.interpolate(x, scale_factor=2),
+        x = F.interpolate(x, scale_factor=2)
         x = self.conv_block4(x)
         x = self.last_conv(x)
         x = torch.tanh(x)
@@ -90,7 +90,7 @@ class Encoder(nn.Module):
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
         )
-        self.linear1 = nn.Linear(8*8*3*self.nc, 64),
+        self.linear1 = nn.Linear(8*8*3*self.nc, 64)
         self.block5 = nn.Sequential(
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),

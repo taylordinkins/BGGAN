@@ -75,13 +75,13 @@ def save_images(args, sample, recon, step, nrow=8):
 
 
 def Disc_loss(args, d_real, data, d_fake, g_fake):
-    real_loss_d = torch.mean(torch.abs(d_real - data))
-    fake_loss_d = torch.mean(torch.abs(d_fake - g_fake))
+    real_loss_d = (d_real - data).abs().mean()
+    fake_loss_d = (d_fake - g_fake).abs().mean()
     return (real_loss_d, fake_loss_d)
         
 
 def Gen_loss(args, g_out, g_fake):
-    return torch.mean(torch.abs(g_out - g_fake))
+    return (g_out - g_fake).abs().mean()
 
 
 def train(args):
@@ -95,26 +95,28 @@ def train(args):
     iters = args.load_step
     prepare_paths(args)
 
-    data_loader = get_loader(args.data_path, args.batch_size, args.scale, 2)
+    data_loader = get_loader(args.data_path, args.batch_size, args.scale, 0)
 
     z = torch.FloatTensor(args.batch_size, args.z).cuda()
     fixed_z = torch.FloatTensor(args.batch_size, args.z).cuda()
     fixed_z.data.uniform_(-1, 1)    
     fixed_x = None
+    iter = 0
     (netG, optimG), (netD, optimD) = init_models(args)
     for i in range(args.epochs):
         for _, data in enumerate(data_loader):
             if data.size(0) != args.batch_size:
                 continue
+            print (iter)
             data = data.cuda()
             if fixed_x is None:
                 fixed_x = data
-            netD.zero_grad()
-
             z.data.uniform_(-1, 1).view(args.batch_size, args.z)
-            print (z.shape)
-            g_fake = netG(z)
-            d_fake = netD(g_fake.detach())
+            netD.zero_grad()
+            netG.zero_grad()
+            with torch.no_grad():
+                g_fake = netG(z)
+            d_fake = netD(g_fake)
             d_real = netD(data)
            
             real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
@@ -122,50 +124,36 @@ def train(args):
             lossD.backward()
             optimD.step()
         
-            netG.zero_grad()
             g_fake = netG(z)
             g_out = netD(g_fake)
             lossG = Gen_loss(args, g_out, g_fake)
             lossG.backward()
             optimG.step()
-
-            lagrangian = (args.gamma*real_loss_d - fake_loss_d).item()
-            args.k += args.lambda_k * lagrangian
-            args.k = max(min(1, opt.k), 0)
-        
-            convg_measure = real_loss_d.item() + lagrangian.abs()
-            measure_history.append(convg_measure)
-            if iters % args.print_step == 0:
-                print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, epoch, 
-                    lossD.item(), lossG.item()))
-                generate_image(args, g_fake, d_real, iter)
-           
-            """update training parameters"""
-            if args.lr_update_type == 1:
+            with torch.no_grad():
+                lagrangian = (args.gamma*real_loss_d - fake_loss_d)
+                args.k += args.lambda_k * lagrangian
+                args.k = max(min(1, args.k), 0)
+            
+                convg_measure = real_loss_d.item() + lagrangian.abs()
+                measure_history.append(convg_measure)
+                if iters % args.print_step == 0:
+                    print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, i, 
+                        lossD.item(), lossG.item()))
+                    save_images(args, g_fake, d_real, iter)
+               
+                """update training parameters"""
                 lr = args.lr * 0.95 ** (iter//3000)
-            elif args.lr_update_type == 2:
-                if iter % 3000 == 3000-1 :
-                    lr *= 0.5
-            elif args.lr_update_type == 3:
-                if iter % 3000 == 3000 -1 :
-                    lr = min(lr*0.5, args.lr_lower_boundary)
-            else:
-                if iter % 3000 == 3000 - 1:
-                    cur_measure = np.mean(measure_history)
-                    if cur_measure > prev_measure * 0.9999:
-                        lr = min(lr*0.5, args.lr_lower_boundary)
-                    prev_measure = cur_measure
- 
-            for p in optimG.param_groups + optimD.param_groups:
-                p['lr'] = lr
+     
+                for p in optimG.param_groups + optimD.param_groups:
+                    p['lr'] = lr
 
-            if iter % 1000 == 0:
-                pathG = 'experiments/{}/models/netG_{}.pt'.format(args.name)
-                pathD = 'experiments/{}/models/netD_{}.pt'.format(args.name)
-                utils.save_model(pathG, netG, optimG)
-                utils.save_model(pathD, netD, optimD)
-        
-            iter += 1
+                if iter % 1000 == 0:
+                    pathG = 'experiments/{}/models/netG_{}.pt'.format(args.name, iter)
+                    pathD = 'experiments/{}/models/netD_{}.pt'.format(args.name, iter)
+                    utils.save_model(pathG, netG, optimG)
+                    utils.save_model(pathD, netD, optimD)
+            
+                iter += 1
 
 
 def generative_experiments(args):
