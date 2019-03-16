@@ -164,6 +164,17 @@ def load_celeba_50k_attrs(args):
     test_loader = torch.utils.data.DataLoader(test_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
     return train_loader, test_loader
 
+def load_celeba_50k_train(args):
+    print('Loading Celeba...\n')
+    torch.cuda.manual_seed(1)
+    kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
+    #train_path = 'data_c/'
+    train_path = '/nfs/guille/wong/wonglab2/datasets/data_c'
+    train_img_folder = ImageFolderWithPaths(train_path, get_attrs(ATTR_PATH))
+    train_loader = torch.utils.data.DataLoader(train_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
+
+    return train_loader
+
 
 def load_cifar_hidden(args, c_idx):
     path = './data_c'

@@ -69,7 +69,7 @@ def load_net_only(model, d):
     return model
 
 
-def generate_image(args, marginals, netG, path):
+def generate_image(args, marginals, netG, path, resnet=False):
     with torch.no_grad():
         noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
         noise = torch.cat((noise, marginals), 1)
@@ -81,6 +81,22 @@ def generate_image(args, marginals, netG, path):
         channels = samples.shape[1]
         samples = samples.view(-1, channels, 64, 64)
        	samples = samples.mul(0.5).add(0.5) 
+    print ('saving sample: ', path)
+    save_image(samples, path)
+
+# only difference is noise size - 9
+def generate_image_resnet(args, marginals, netG, path):
+    with torch.no_grad():
+        noise = torch.randn(args.batch_size, args.z-9, requires_grad=True).cuda()
+        noise = torch.cat((noise, marginals), 1)
+        samples = netG(noise)
+    if samples.dim() < 4:
+        channels = 1
+        samples = samples.view(-1, channels, 28, 28)
+    else:
+        channels = samples.shape[1]
+        samples = samples.view(-1, channels, 64, 64)
+        samples = samples.mul(0.5).add(0.5) 
     print ('saving sample: ', path)
     save_image(samples, path)
 

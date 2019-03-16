@@ -62,12 +62,16 @@ def grad_penalty_1dim(args, netD, data, fake):
     return gradient_penalty
 
 
-def grad_penalty_3dim(args, netD, data, fake):
+def grad_penalty_3dim(args, netD, data, fake, resnet=True):
     alpha = torch.randn(args.batch_size, 1, requires_grad=True).cuda()
     alpha = alpha.expand(args.batch_size, data.nelement()//args.batch_size)
     alpha = alpha.contiguous().view(args.batch_size, 3, 64, 64)
     interpolates = alpha * data + ((1 - alpha) * fake).cuda()
-    disc_interpolates = netD(interpolates)
+    if resnet:
+        disc_interpolates, _ = netD(interpolates)
+    # only unpack 1 value
+    else:
+        disc_interpolates = netD(interpolates)
 
     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
             grad_outputs=torch.ones(disc_interpolates.size()).cuda(),

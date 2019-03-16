@@ -287,7 +287,7 @@ def train(args):
             d_fake = netD(fake)
             d_fake = d_fake.mean()
             d_fake.backward(one, retain_graph=True)
-            gp = ops.grad_penalty_3dim(args, netD, data, fake)
+            gp = ops.grad_penalty_3dim_wgan(args, netD, data, fake, resnet=False)
             #ct = ops.consistency_term(args, netD, data)
             # set it to 0 for now, avoid tensor problems
             ct = 0
@@ -317,12 +317,10 @@ def train(args):
 
         # penalize confidence 
         # classification of attributes
-        guessing = torch.tensor([0.5 for x in range(9)]).cuda()
-        guessing = guessing.repeat(args.batch_size).view(args.batch_size, 9)
-        classif_loss = mseloss(G_atts, guessing)
+        classif_loss = torch.sum(torch.min(G_atts, 1-G_atts))
         #print(G.cpu().item())
-        dist_coef = 15*math.exp(-(3000/(iter+1)))
-        classif_coef = 15*math.exp(-(3000/(iter+1)))
+        dist_coef = 15*math.exp(-(3500/(iter+1)))
+        classif_coef = 10*math.exp(-(3500/(iter+1)))
         G = G - dist_coef*dist_loss - classif_coef*classif_loss
         #print(G.cpu().item())
         #print(dist_loss.cpu().item())
