@@ -16,7 +16,7 @@ from torchvision.utils import save_image
 import ops
 import utils
 import datagen
-from resnet import Generator, Discriminator, MyConvo2d
+from resnet import Generator, Discriminator, MyConvo2d, AttributeDetector
 import bayes_net
 
 def load_args():
@@ -101,6 +101,7 @@ def evidence_test(args):
     
     netG = Generator(args).cuda()
     netD = Discriminator(args).cuda()
+    fdet = load_feature_detector(args)
     graph = bayes_net.create_bayes_net()
     evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
     marginals = bayes_net.return_marginals(graph, args.batch_size, evidence)
@@ -119,9 +120,9 @@ def evidence_test(args):
             p.requires_grad = False
 
         marginals = torch.tensor(marginals).cuda()
-        noise = torch.cat((noise, marginals), 1)
-        fake = netG(noise)
-        G, G_attrs = netD(fake)
+        fake = netG(noise, marginals)
+        G, _ = netD(fake)
+        G_attrs = torch.sigmoid(fdet(fake))
         classif_loss = torch.sum(torch.min(G_attrs, 1-G_attrs))
         G_attrs = torch.round(torch.sigmoid(G_attrs)).mean(0)
         dist_loss = mseloss(G_attrs, marginals[0])
@@ -151,20 +152,27 @@ def evidence_test(args):
         marginals = torch.tensor(marginals)
         mdist = torch.distributions.Bernoulli(marginals)
         attr_samples = mdist.sample().cuda()
-        noise = torch.cat((noise, attr_samples), 1)
-        fake = netG(noise)
-        G, fake_preds = netD(fake)
+        fake = netG(noise, attr_samples)
+        G, _ = netD(fake)
+        fake_preds = torch.sigmoid(fdet(fake))
         G_attrs = bce_loss(fake_preds, attr_samples)
         path = 'results/celeba_resnet/evtest_sampling.png'
         utils.generate_image(args, attr_samples, netG, path)
 
         print('Attribute Loss', G_attrs.cpu().item())
+        print()
         
 
+def load_feature_detector(args):
+    print('Loading feature detector...\n')
+    fdet = AttributeDetector(args).cuda()
+    fdet.load_state_dict(torch.load('saved_models/celeba/netFDET_best_r2'))
+    for p in fdet.parameters():
+        p.requires_grad = False
+    fdet.eval()
+
+    return fdet
     
-
-
-
 
 def train(args, load_models=False):
     
@@ -172,7 +180,7 @@ def train(args, load_models=False):
     
     netG = Generator(args).cuda()
     netD = Discriminator(args).cuda()
-    
+    fdet = load_feature_detector(args)
 
     graph = bayes_net.create_bayes_net()
     #print (netG, netD)
@@ -195,10 +203,10 @@ def train(args, load_models=False):
 
     bce_loss = nn.BCEWithLogitsLoss()
 
-    celeba_train = datagen.load_celeba_50k_train(args)
-    train = inf_gen_attrs(celeba_train)
+    celeba_train = datagen.load_celeba_50k(args)
+    train = inf_gen(celeba_train)
     print ('saving reals')
-    reals, _, _ = next(train)
+    reals, _ = next(train)
     utils.create_if_empty('results') 
     utils.create_if_empty('results/celeba_resnet') 
     utils.create_if_empty('saved_models') 
@@ -216,29 +224,26 @@ def train(args, load_models=False):
         for p in netD.parameters():
             p.requires_grad = True
         for _ in range(args.disc_iters):
-            data, targets, targ_attrs = next(train)
+            data, targets = next(train)
             netD.zero_grad()
             #print(data.shape)
-            true_false, preds = netD(data)
+            true_false, _ = netD(data)
             d_real = true_false.mean()
-            d_attrs = bce_loss(preds, targ_attrs.squeeze().float().cuda())
-            d_total_loss = d_real - d_attrs
-            d_total_loss.backward(mone, retain_graph=True)
+            d_real.backward(mone, retain_graph=True)
 
             noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
             marginals = torch.tensor(get_marginals(graph, args.batch_size))
             mdist = torch.distributions.Bernoulli(marginals)
             attr_samples = mdist.sample().cuda().requires_grad_()
-            noise = torch.cat((noise, attr_samples), 1)
             with torch.no_grad():
-                fake = netG(noise)
+                fake = netG(noise, attr_samples)
             fake.requires_grad_(True)
             d_fake, _ = netD(fake)
             d_fake = d_fake.mean()
             d_fake.backward(one, retain_graph=True)
             gp = ops.grad_penalty_3dim(args, netD, data, fake)
             gp.backward()
-            d_cost = d_fake - d_total_loss + gp
+            d_cost = d_fake - d_real + gp
             wasserstein_d = d_real - d_fake
             optimD.step()
 
@@ -249,9 +254,9 @@ def train(args, load_models=False):
         marginals = torch.tensor(get_marginals(graph, args.batch_size))
         mdist = torch.distributions.Bernoulli(marginals)
         attr_samples = mdist.sample().cuda().requires_grad_()
-        noise = torch.cat((noise, attr_samples), 1)
-        fake = netG(noise)
-        G, fake_preds = netD(fake)
+        fake = netG(noise, attr_samples)
+        G, _ = netD(fake)
+        fake_preds = torch.sigmoid(fdet(fake))
         G = G.mean()
         g_attrs = bce_loss(fake_preds, attr_samples)
         classif_weight = 12
@@ -265,7 +270,6 @@ def train(args, load_models=False):
         if iter % 10 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
-            print('iter: ', iter, 'train D attr', d_attrs.cpu().item())
             print('iter: ', iter, 'train G attr', g_attrs.cpu().item())
             print('')
         if iter % 500 == 0:
@@ -277,13 +281,14 @@ def train(args, load_models=False):
             utils.save_model('saved_models/celeba_resnet/netG_current', netG, optimG)
             utils.save_model('saved_models/celeba_resnet/netD_current', netD, optimD)
 
+
 def train_dist_exp(args, load_models=False):
     
     torch.manual_seed(8734)
     
     netG = Generator(args).cuda()
     netD = Discriminator(args).cuda()
-
+    fdet = load_feature_detector(args)
     graph = bayes_net.create_bayes_net()
     #print (netG, netD)
     if load_models is False:
@@ -293,6 +298,8 @@ def train_dist_exp(args, load_models=False):
 
     optimG = optim.Adam(netG.parameters(), lr=1e-4, betas=(0, 0.9), weight_decay=1e-4)
     optimD = optim.Adam(netD.parameters(), lr=1e-4, betas=(0, 0.9), weight_decay=1e-4)
+
+
     
     if load_models:
         print('Loading models...\n')
@@ -306,10 +313,10 @@ def train_dist_exp(args, load_models=False):
     mseloss = nn.MSELoss()
     bce_loss = nn.BCEWithLogitsLoss()
 
-    celeba_train = datagen.load_celeba_50k_train(args)
-    train = inf_gen_attrs(celeba_train)
+    celeba_train = datagen.load_celeba_50k(args)
+    train = inf_gen(celeba_train)
     print ('saving reals')
-    reals, _, _ = next(train)
+    reals, _ = next(train)
     utils.create_if_empty('results') 
     utils.create_if_empty('results/celeba_resnet') 
     utils.create_if_empty('saved_models') 
@@ -327,27 +334,24 @@ def train_dist_exp(args, load_models=False):
         for p in netD.parameters():
             p.requires_grad = True
         for _ in range(args.disc_iters):
-            data, targets, targ_attrs = next(train)
+            data, targets = next(train)
             netD.zero_grad()
             #print(data.shape)
-            true_false, preds = netD(data)
+            true_false, _ = netD(data)
             d_real = true_false.mean()
-            d_attrs = bce_loss(preds, targ_attrs.squeeze().float().cuda())
-            d_total_loss = d_real - d_attrs
-            d_total_loss.backward(mone, retain_graph=True)
+            d_real.backward(mone, retain_graph=True)
 
             noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
             marginals = torch.tensor(get_marginals(graph, args.batch_size), requires_grad=True).cuda()
-            noise = torch.cat((noise, marginals), 1)
             with torch.no_grad():
-                fake = netG(noise)
+                fake = netG(noise, marginals)
             fake.requires_grad_(True)
             d_fake, _ = netD(fake)
             d_fake = d_fake.mean()
             d_fake.backward(one, retain_graph=True)
             gp = ops.grad_penalty_3dim(args, netD, data, fake)
             gp.backward()
-            d_cost = d_fake - d_total_loss + gp
+            d_cost = d_fake - d_real + gp
             wasserstein_d = d_real - d_fake
             optimD.step()
 
@@ -356,15 +360,14 @@ def train_dist_exp(args, load_models=False):
         netG.zero_grad()
         noise = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
         marginals = torch.tensor(get_marginals(graph, args.batch_size), requires_grad=True).cuda()
-        noise = torch.cat((noise, marginals), 1)
-        fake = netG(noise)
-        G, G_attrs = netD(fake)
+        fake = netG(noise, marginals)
+        G, _ = netD(fake)
         G = G.mean()
+        G_attrs = torch.sigmoid(fdet(fake))
         classif_loss = torch.sum(torch.min(G_attrs, 1-G_attrs))
         G_attrs = torch.round(torch.sigmoid(G_attrs)).mean(0)
         dist_loss = mseloss(G_attrs, marginals[0])
-        classif_weight = 10
-        classif_coef = classif_weight*math.exp(-(3000/(iter+1)))
+        classif_coef = math.exp(-(3000/(iter+1)))
         dist_coef = 15*math.exp(-(3000/(iter+1)))
         G = G - dist_coef*dist_loss - classif_coef*classif_loss
 
@@ -375,8 +378,7 @@ def train_dist_exp(args, load_models=False):
         if iter % 10 == 0:
             print('iter: ', iter, 'train D cost', d_cost.cpu().item())
             print('iter: ', iter, 'train G cost', g_cost.cpu().item())
-            print('iter: ', iter, 'train D attr', d_attrs.cpu().item())
-            print('iter: ', iter, 'dist G cost', dist_loss.cpu().item())
+            print('iter: ', iter, 'train G distribution', dist_loss.cpu().item())
             print('iter: ', iter, 'classif G cost', classif_loss.cpu().item())
             print('')
         if iter % 500 == 0:

@@ -156,7 +156,8 @@ class Generator(nn.Module):
 
         dim = self.dim
         output_dim = self.output_dim
-        self.ln1 = nn.Linear(128+9, 4*4*8*dim)
+        self.ln1 = nn.Linear(128, (4*4*8*dim)-1000)
+        self.ln2 = nn.Linear(9, 1000)
         self.rb1 = ResidualBlock(args, 8*dim, 8*dim, 3, resample='up')
         self.rb2 = ResidualBlock(args, 8*dim, 4*dim, 3, resample='up')
         self.rb3 = ResidualBlock(args, 4*dim, 2*dim, 3, resample='up')
@@ -167,8 +168,10 @@ class Generator(nn.Module):
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
 
-    def forward(self, input):
+    def forward(self, input, marginals):
         output = self.ln1(input.contiguous())
+        marginals_output = self.relu(self.ln2(marginals.contiguous()))
+        output = torch.cat((output, marginals_output), 1)
         output = output.view(-1, 8*self.dim, 4, 4)
         output = self.rb1(output)
         output = self.rb2(output)
