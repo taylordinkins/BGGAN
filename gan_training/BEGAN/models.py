@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -7,35 +8,44 @@ class Generator(nn.Module):
             setattr(self, k, v)
         super(Generator, self).__init__()
 
-        self.conv_block = nn.Sequential([
-            nn.Linear(self.h, 8*8*self.nc),
-            nn.ELU(inplace=True),
+        self.linear = nn.Linear(self.z, 8*8*self.nc)
+        self.conv_block1 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-            F.interpolate(scale_factor=2),
+        )
+        self.conv_block2 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-            F.interpolate(scale_factor=2),
+        )
+        self.conv_block3 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-            F.interpolate(scale_factor=2),
+        )
+        self.conv_block4 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-        ])
+        )
         self.last_conv = nn.Conv2d(self.nc, 3, 3, 1, 1)
 
     def forward(self, input):
-        x = self.l0(input)
+        x = self.linear(input)
+        x = F.elu(x)
         x = x.view(self.batch_size, self.nc, 8, 8)
-        x = self.conv_block(x)
+        x = self.conv_block1(x)
+        F.interpolate(x, scale_factor=2),
+        x = self.conv_block2(x)
+        F.interpolate(x, scale_factor=2),
+        x = self.conv_block3(x)
+        F.interpolate(x, scale_factor=2),
+        x = self.conv_block4(x)
         x = self.last_conv(x)
         x = torch.tanh(x)
         return x
@@ -45,7 +55,7 @@ class Encoder(nn.Module):
         for k, v in vars(args).items():
             setattr(self, k, v)
         super(Encoder, self).__init__()
-        self.block1 = nn.Sequential([
+        self.block1 = nn.Sequential(
             nn.Conv2d(3, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
@@ -53,35 +63,35 @@ class Encoder(nn.Module):
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 1, 1, 0),
-        ])
+        )
         self.pool1 = nn.AvgPool2d(2, 2)
 
-        self.block2 = nn.Sequential([
+        self.block2 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(self.nc, 2*self.nc, 1, 1, 0),
-        ])
+        )
         self.pool2 = nn.AvgPool2d(2, 2)
 
-        self.block3 = nn.Sequential([
+        self.block3 = nn.Sequential(
             nn.Conv2d(2*self.nc, 2*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(2*self.nc, 2*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(2*self.nc, 3*self.nc, 1, 1, 0),
-        ])
+        )
         self.pool3 = nn.AvgPool2d(2, 2)
         
-        self.block4 = nn.Sequential([
+        self.block4 = nn.Sequential(
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-        ])
+        )
         self.linear1 = nn.Linear(8*8*3*self.nc, 64),
-        self.block5 = nn.Sequential([
+        self.block5 = nn.Sequential(
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
@@ -92,7 +102,7 @@ class Encoder(nn.Module):
             nn.ELU(inplace=True),
             nn.Conv2d(4*self.nc, 4*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
-        ])
+        )
         self.linear2 = nn.Linear(8*8*4*self.nc, self.z)
 
         
@@ -103,7 +113,7 @@ class Encoder(nn.Module):
         x = self.pool2(x)
         x = self.block3(x)
         x = self.pool3(x)
-        if self.scale_size == 64:
+        if self.scale == 64:
             x = self.block4(x)
             x = x.view(self.batch_size, 8*8*3*self.nc)
             x = self.linear1(x)
@@ -117,7 +127,7 @@ class Discriminator(nn.Module):
     def __init__(self, nc):
         super(Discriminator, self).__init__()
         self.enc = Encoder(nc)
-        self.dec = Decoder(nc, True)
+        self.dec = Generator(nc, True)
     def forward(self, input):
         return self.dec(self.enc(input))
 
@@ -126,11 +136,3 @@ def weights_init(self, m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         m.weight.data.normal_(0.0, 0.02)
-
-class L1_Loss(nn.Module):
-    def __init__(self, size_average=True):
-        super(_Loss, self).__init__()
-        self.size_average = size_average
-    def forward(self, input, target):
-        backend_fn = getattr(self._backend, type(self).__name__)
-        return backend_fn(self.size_average)(input, target)

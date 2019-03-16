@@ -10,7 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from models import *
+import utils
+from models import Generator, Discriminator
 from dataloader import *
 
 
@@ -26,15 +27,14 @@ def load_args():
     parser.add_argument('--lambda_k', default=0.001, type=float)
     parser.add_argument('--k', default=0, type=float)
     parser.add_argument('--scale', default=64, type=int)
-    parser.add_argument('--model_name', default='test3')
+    parser.add_argument('--name', default='test3')
     parser.add_argument('--base_path', default='./')
-    parser.add_argument('--data_path', default='data/CelebA/images')
+    parser.add_argument('--data_path', default='../../../celeba/val/val')
     parser.add_argument('--load_step', default=0, type=int)
     parser.add_argument('--print_step', default=100, type=int)
-    parser.add_argument('--l_type', default=1, type=int)
-    parser.add_argument('--tanh', default=1, type=int)
-    parser.add_argument('--train', default=1, type=int)
-    opt = parser.parse_args()
+    parser.add_argument('--resume_G', default=None)
+    parser.add_argument('--resume_D', default=None)
+    args = parser.parse_args()
     return args
 
 
@@ -57,7 +57,7 @@ def init_models(args):
     optimG = torch.optim.Adam(netG.parameters(), betas=(0.5, 0.999), lr=args.lr)
     optimD = torch.optim.Adam(netD.parameters(), betas=(0.5, 0.999), lr=args.lr)
 
-    str = 'experiments/{}/models/'.format(args.model_name)
+    str = 'experiments/{}/models/'.format(args.name)
     if args.resume_G is not None:
         netG, optimG = utils.load_model(netG, optimG, str+args.resume_G)
     if args.resume_D is not None:
@@ -66,29 +66,22 @@ def init_models(args):
 
 
 def save_images(args, sample, recon, step, nrow=8):
-    save_path = 'experiments/{}/{}_gen.png'.format(args.model_name, step)
+    save_path = 'experiments/{}/{}_gen.png'.format(args.name, step)
     save_image(sample, save_path, nrow=nrow, normalize=True)
     if recon is not None:
-        save_path = 'experiments/{}/{}_disc.png'.format(args.model_name, step)
+        save_path = 'experiments/{}/{}_disc.png'.format(args.name, step)
         save_image(recon, save_path, nrow=nrow, normalize=True)
     return
 
 
 def Disc_loss(args, d_real, data, d_fake, g_fake):
-    if args.l_type == 1:
-        real_loss_d = torch.mean(torch.abs(d_real - data))
-        fake_loss_d = torch.mean(torch.abs(d_fake - g_fake))
-    else:
-        real_loss_d = self.criterion(d_real, data)
-        fake_loss_d = self.criterion(d_fake , g_fake.detach())
+    real_loss_d = torch.mean(torch.abs(d_real - data))
+    fake_loss_d = torch.mean(torch.abs(d_fake - g_fake))
     return (real_loss_d, fake_loss_d)
         
 
 def Gen_loss(args, g_out, g_fake):
-    if args.l_type == 1:
-        return torch.mean(torch.abs(g_out - g_fake))
-    else:
-        return self.criterion(g_out, g_fake)
+    return torch.mean(torch.abs(g_out - g_fake))
 
 
 def train(args):
@@ -100,18 +93,15 @@ def train(args):
     
     lr = args.lr
     iters = args.load_step
-    prepare_paths()
+    prepare_paths(args)
 
     data_loader = get_loader(args.data_path, args.batch_size, args.scale, 2)
 
     z = torch.FloatTensor(args.batch_size, args.z).cuda()
-    fixed_z = torch.FloatTensor(args.barch_size, args.z).cuda()
+    fixed_z = torch.FloatTensor(args.batch_size, args.z).cuda()
     fixed_z.data.uniform_(-1, 1)    
     fixed_x = None
-    
-    self.criterion = L1Loss()
-
-    netG, optimG, netD, optimD = init_models(args)
+    (netG, optimG), (netD, optimD) = init_models(args)
     for i in range(args.epochs):
         for _, data in enumerate(data_loader):
             if data.size(0) != args.batch_size:
@@ -121,12 +111,13 @@ def train(args):
                 fixed_x = data
             netD.zero_grad()
 
-            z.data.uniform_(-1, 1)
+            z.data.uniform_(-1, 1).view(args.batch_size, args.z)
+            print (z.shape)
             g_fake = netG(z)
             d_fake = netD(g_fake.detach())
             d_real = netD(data)
            
-            real_loss_d, fake_loss_d = Disc_loss(d_real, data, d_fake, g_fake)
+            real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
             lossD = real_loss_d - args.k * fake_loss_d
             lossD.backward()
             optimD.step()
@@ -134,7 +125,7 @@ def train(args):
             netG.zero_grad()
             g_fake = netG(z)
             g_out = netD(g_fake)
-            lossG = Gen_loss(g_out, g_fake)
+            lossG = Gen_loss(args, g_out, g_fake)
             lossG.backward()
             optimG.step()
 
@@ -169,8 +160,8 @@ def train(args):
                 p['lr'] = lr
 
             if iter % 1000 == 0:
-                pathG = 'experiments/{}/models/netG_{}.pt'.format(args.model_name)
-                pathD = 'experiments/{}/models/netD_{}.pt'.format(args.model_name)
+                pathG = 'experiments/{}/models/netG_{}.pt'.format(args.name)
+                pathD = 'experiments/{}/models/netD_{}.pt'.format(args.name)
                 utils.save_model(pathG, netG, optimG)
                 utils.save_model(pathD, netD, optimD)
         
@@ -205,7 +196,5 @@ def generative_experiments(args):
 
 if __name__ == "__main__":
     args = load_args()
-    if opt.train:
-        train(args)
-    else:
-        generative_experiments(args)
+    train(args)
+    generative_experiments(args)
