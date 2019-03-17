@@ -124,7 +124,7 @@ def evidence_test(args):
         G, _ = netD(fake)
         G_attrs = torch.sigmoid(fdet(fake))
         classif_loss = torch.sum(torch.min(G_attrs, 1-G_attrs))
-        G_attrs = torch.round(torch.sigmoid(G_attrs)).mean(0)
+        G_attrs = torch.round(G_attrs).mean(0)
         dist_loss = mseloss(G_attrs, marginals[0])
         path = 'results/celeba_resnet/evtest_dist.png'
         utils.generate_image(args, marginals, netG, path)
@@ -365,7 +365,7 @@ def train_dist_exp(args, load_models=False):
         G = G.mean()
         G_attrs = torch.sigmoid(fdet(fake))
         classif_loss = torch.sum(torch.min(G_attrs, 1-G_attrs))
-        G_attrs = torch.round(torch.sigmoid(G_attrs)).mean(0)
+        G_attrs = torch.round(G_attrs).mean(0)
         dist_loss = mseloss(G_attrs, marginals[0])
         classif_coef = math.exp(-(3000/(iter+1)))
         dist_coef = 15*math.exp(-(3000/(iter+1)))

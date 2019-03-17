@@ -14,7 +14,7 @@ pd.set_option('display.max_columns', 500)
 KEEP_ATTS = ['Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
 
 def create_bayes_net():
-	atts = pd.read_csv('../data/list_attr_celeba.csv')
+	atts = pd.read_csv('../../data/list_attr_celeba.csv')
 	atts = atts[KEEP_ATTS]
 	graph = BayesianModel()
 	graph.add_nodes_from(atts.columns)
@@ -79,10 +79,10 @@ def return_marginals(graph, batch_size, evidence):
         for val in KEEP_ATTS:
             if val not in targets:
                 df.loc[i, val] = 1
-                print(val, 1)
+                #print(val, 1)
             else:
                 df.loc[i, val] = query[val].values[1]
-                print(val, query[val].values[1])
+                #print(val, query[val].values[1])
         
     df = df.apply(pd.to_numeric, downcast='float', errors='coerce')
     return df.values

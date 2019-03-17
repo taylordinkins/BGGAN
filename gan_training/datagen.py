@@ -138,7 +138,7 @@ def load_cifar(args):
 def load_celeba_50k(args):
     torch.cuda.manual_seed(1)
     kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-    path = 'data_c/'
+    path = '/nfs/guille/wong/wonglab2/datasets/data_c'
     train_loader = torch.utils.data.DataLoader(
             datasets.ImageFolder(path,
                 transform=transforms.Compose([
