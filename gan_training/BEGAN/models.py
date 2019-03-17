@@ -178,10 +178,10 @@ class Encoder(nn.Module):
         return x
     
 class Discriminator(nn.Module):
-    def __init__(self, nc):
+    def __init__(self, args):
         super(Discriminator, self).__init__()
-        self.enc = Encoder(nc)
-        self.dec = Decoder(nc, True)
+        self.enc = Encoder(args)
+        self.dec = Decoder(args, True)
     def forward(self, input):
         return self.dec(self.enc(input))
 

@@ -95,6 +95,47 @@ def load_feature_detector(args):
 
     return fdet
 
+def evidence_test(args):
+    torch.manual_seed(8734)
+    print('Evidence test...\n')
+    
+    print('Loading models...\n')
+    (netG, optimG), (netD, optimD) = init_models(args)
+    fdet = load_feature_detector(args)
+    graph = bayes_net.create_bayes_net()
+    evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
+    marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
+    z = torch.FloatTensor(args.batch_size, args.z).cuda()
+    z.data.uniform_(-1, 1).view(args.batch_size, args.z)
+    bce_loss = BCEWithLogitsLoss()
+    mse_loss = MSELoss()
+
+    
+    for p in netD.parameters():
+        p.requires_grad = False
+    for pp in netG.parameters():
+        p.requires_grad = False
+
+
+    g_fake = netG(z, marginals)
+    g_attrs = torch.sigmoid(fdet(g_fake))
+    classif_loss = torch.mean(torch.min(g_attrs, 1-g_attrs))
+    g_attrs = torch.round(g_attrs).mean(0)
+    dist_loss = mse_loss(g_attrs, marginals[0])
+    classif_coef = math.exp(-(3000/(iter+1)))
+    dist_coef = math.exp(-(3000/(iter+1)))
+
+    print('Distribution Loss', dist_loss.cpu().item())
+    print('Classification Loss', classif_loss.cpu().item())
+    print()
+
+    print('Saving images...\n')
+    save_images(args, g_fake, None, 'test')
+
+
+        
+
+
 def train(args):
     random.seed(8722)
     torch.manual_seed(4565)
