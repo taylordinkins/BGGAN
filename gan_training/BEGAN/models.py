@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import grad
 
 class Decoder(nn.Module):
-    def __init__(self, args, disc=False):
+    def __init__(self, args):
         for k, v in vars(args).items():
             setattr(self, k, v)
         super(Decoder, self).__init__()
@@ -53,7 +53,7 @@ class Decoder(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, args, disc=False):
+    def __init__(self, args):
         for k, v in vars(args).items():
             setattr(self, k, v)
         super(Generator, self).__init__()
@@ -89,7 +89,7 @@ class Generator(nn.Module):
     def forward(self, input, marginals):
         x = self.linear(input)
         x = F.elu(x)
-        y = self.linear2(marginals)
+        y = self.linear2(marginals.contiguous())
         y = F.elu(y)
         x = torch.cat((x, y), 1)
         x = x.view(self.batch_size, self.nc, 8, 8)
@@ -181,7 +181,7 @@ class Discriminator(nn.Module):
     def __init__(self, args):
         super(Discriminator, self).__init__()
         self.enc = Encoder(args)
-        self.dec = Decoder(args, True)
+        self.dec = Decoder(args)
     def forward(self, input):
         return self.dec(self.enc(input))
 

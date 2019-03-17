@@ -78,3 +78,6 @@ def generate_image(args, netG, path):
        	samples = samples.mul(0.5).add(0.5) 
     print ('saving sample: ', path)
     save_image(samples, path)
+
+
+
