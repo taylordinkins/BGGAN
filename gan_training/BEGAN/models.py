@@ -8,8 +8,8 @@ class Generator(nn.Module):
             setattr(self, k, v)
         super(Generator, self).__init__()
 
-        self.linear = nn.Linear(self.z, 8*8*self.nc-1000)
-        self.linear_m = nn.Linear(9, 1000)
+        self.linear = nn.Linear(self.z, 8*8*self.nc-512)
+        self.linear_m = nn.Linear(9, 512)
         self.conv_block1 = nn.Sequential(
             nn.Conv2d(self.nc, self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
@@ -137,7 +137,7 @@ class Discriminator(nn.Module):
     def forward(self, input, attrs=None):
         h = self.enc(input)
         x = self.dec(h, attrs)
-        return x
+        return h, x
 
 
 class AttributeDetector(nn.Module):

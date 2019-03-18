@@ -50,21 +50,21 @@ def prepare_paths(args):
 def init_models(args):
     netG = Generator(args).cuda()
     netD = Discriminator(args).cuda()
-    netAC = PreActResNet().cuda()
+    netL = PreActResNet().cuda()
     print (netG, netD)
 
     optimG = torch.optim.Adam(netG.parameters(), betas=(0.5, 0.999), lr=args.lr)
     optimD = torch.optim.Adam(netD.parameters(), betas=(0.5, 0.999), lr=args.lr)
-    optimAC = torch.optim.Adam(netAC.parameters(), betas=(0.5, 0.999), lr=args.lr)
+    optimL = torch.optim.Adam(netL.parameters(), betas=(0.5, 0.999), lr=args.lr)
 
     if args.resume:
         Gpath = 'experiments/{}/models/netG_{}.pt'.format(args.name, args.load_step)
         Dpath = 'experiments/{}/models/netD_{}.pt'.format(args.name, args.load_step)
-        ACpath = 'experiments/{}/models/netAC_{}.pt'.format(args.name, args.load_step)
+        Lpath = 'experiments/{}/models/netL_{}.pt'.format(args.name, args.load_step)
         netG, optimG = utils.load_model(args, netG, optimG, Gpath)
         netD, optimD = utils.load_model(args, netD, optimD, Dpath)
-        netAC, optimAC = utils.load_model(args, netAC, optimAC, ACpath)
-    return (netG, optimG), (netD, optimD), (netAC, optimAC)
+        netL, optimL = utils.load_model(args, netL, optimL, Lpath)
+    return (netG, optimG), (netD, optimD), (netL, optimL)
 
 
 def save_images(args, sample, recon, step, nrow=8):
@@ -83,30 +83,55 @@ def rand_marginals(args, graph):
     return marginals
 
 
+def pretrain_labeler(args, netL, optimL):
+    bce_loss = torch.nn.BCEWithLogitsLoss()
+    print ('loading data')
+    data_loader = datagen.load_celeba_50k_attrs(args)
+    print ('starting pretraining')
+    for _ in range(10):
+        for i, (data, _, attrs) in enumerate(data_loader):
+            data = data.cuda()
+            attrs = attrs.cuda().view(args.batch_size, 9)
+            attrs = attrs + 1
+            attrs[attrs==2] = 1
+            output = netL(data)
+            loss = bce_loss(output, attrs.float())
+            loss.backward()
+            optimL.step()
+            print (i)
+        print ('pretrain loss: ', loss)
+
+
 def train(args):
     random.seed(8722)
     torch.manual_seed(4565)
     measure_history = deque([0]*3000, 3000)
     convergence_history = []
     prev_measure = 1
+    iter = 0
+    thresh = 0.5
     
-    #fdet = utils.load_feature_detector(args)
     graph = bn.create_bayes_net()
     bce_loss = torch.nn.BCEWithLogitsLoss()
     lr = args.lr
     iters = args.load_step
     prepare_paths(args)
     u_dist = utils.create_uniform(-1, 1)
-    data_loader = datagen.load_celeba_50k_attrs(args)
     fixed_z = utils.sample_z(u_dist, (args.batch_size, args.z))
-    (netG, optimG), (netD, optimD), (netAC, optimAC) = init_models(args)
-    iter = 0
-    thresh = 0.5
+    (netG, optimG), (netD, optimD), (netL, optimL) = init_models(args)
+    pretrain_labeler(args, netL, optimL)
+    data_loader = datagen.load_celeba_50k_attrs(args)
     for epoch in range(args.epochs):
         for i, (data, _, attrs) in enumerate(data_loader):
             data = data.cuda()
             attrs = torch.squeeze(attrs>0).float().cuda()
-            
+            """ Labeler """
+            netL.zero_grad()
+            real_labels = netL(data)
+            real_label_loss = bce_loss(real_labels, attrs).mean()
+            real_label_loss.backward()
+            optimL.step()
+            """ Discriminator """
             for p in netD.parameters():
                 p.requires_grad = True
             z = utils.sample_z(u_dist, (args.batch_size, args.z))       
@@ -114,8 +139,8 @@ def train(args):
             netD.zero_grad()
             with torch.no_grad():
                 g_fake = netG(z, marginals)
-            d_fake = netD(g_fake, marginals)
-            d_real = netD(data, attrs)
+            _, d_fake = netD(g_fake, marginals)
+            _, d_real = netD(data, attrs)
           
             real_loss_d = (d_real - data).abs().mean()
             fake_loss_d = (d_fake - g_fake).abs().mean()
@@ -123,24 +148,27 @@ def train(args):
             lossD = real_loss_d - args.k * fake_loss_d
             lossD.backward()
             optimD.step()
-        
+            """ Generator """
             for p in netD.parameters():
                 p.requires_grad = False
             marginals = rand_marginals(args, graph)
-            netG.zero_grad(); netAC.zero_grad()
+            netG.zero_grad()
+            netL.zero_grad()
             z = utils.sample_z(u_dist, (args.batch_size, args.z))       
             g_fake = netG(z, marginals)
-            d_fake = netD(g_fake, marginals)
+            _, d_fake = netD(g_fake, marginals)
             lossG = (d_fake - g_fake).abs().mean()
             
-            ## Ok lets penalize distance from marginals
-            dist = netAC(g_fake)
-            dist_batch = dist.mean(0)
-            dist_loss = bce_loss(dist_batch, marginals[0]).mean()
-            loss_gac = dist_loss + lossG
-            
+            ## Ok lets penalize distance from marginals (labeler)
+            with torch.no_grad():
+                marginals = rand_marginals(args, graph)
+                z = utils.sample_z(u_dist, (args.batch_size, args.z))       
+                g_fake = netG(z, marginals)
+            fake_labels = netL(g_fake)
+            fake_label_loss = bce_loss(fake_labels, marginals).mean()
+            loss_gac = fake_label_loss + lossG
             loss_gac.backward()
-            optimG.step(); optimAC.step()
+            optimG.step(); optimL.step()
 
             lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
             args.k += args.lambda_k * lagrangian
@@ -150,7 +178,7 @@ def train(args):
             measure_history.append(convg_measure)
             if iter % args.print_step == 0:
                 print ("Iter: {}, D loss: {}, G Loss: {}, AC loss: {}".format(iter,
-                       lossD.item(), lossG.item(), dist_loss.item()))
+                       lossD.item(), lossG.item(), fake_label_loss.item()))
                 save_images(args, g_fake.detach(), d_real.detach(), iter)
            
             """update training parameters"""
@@ -168,7 +196,7 @@ def train(args):
 
 
 def generative_experiments(args):
-    netG, _, netD, _ = load_models(args)
+    (netG, _,), (netD, _), (netL, _) = init_models(args)
     z = []
     for iter in range(10):
         z0 = np.random.uniform(-1, 1, args.z)

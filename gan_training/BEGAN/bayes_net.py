@@ -89,8 +89,12 @@ def main():
 	for val in KEEP_ATTS:
 		if val not in targets:
 			df.loc[0, val] = 1
-			# print(val, 1)
+			print(val, 1)
 		else:
 			df.loc[0, val] = query[val].values[1]
-			# print(val, query[val].values[1])
+			print(val, query[val].values[1])
 	return df
+
+
+if __name__ == '__main__':
+    main()
