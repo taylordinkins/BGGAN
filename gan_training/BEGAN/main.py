@@ -41,6 +41,9 @@ def load_args():
     parser.add_argument('--data_parallel', default=None)
     parser.add_argument('--samples', default=None)
     parser.add_argument('--acbegan', default=None)
+    parser.add_argument('--lamba_class', default=0.1, type=float)
+    parser.add_argument('--lamba_marginal', default=1.0, type=float)
+    
     args = parser.parse_args()
     return args
 
@@ -197,6 +200,8 @@ def train(args):
         netG.apply(weights_init)
         netD.apply(weights_init)
 
+    
+
     graph = bayes_net.create_bayes_net()
     bce_loss = nn.BCEWithLogitsLoss()
     mse_loss = nn.MSELoss()
@@ -239,8 +244,11 @@ def train(args):
             classif_loss = torch.mean(torch.min(g_attrs, 1-g_attrs))
             g_attrs = torch.round(g_attrs).mean(0)
             dist_loss = mse_loss(g_attrs, marginals[0])
-            classif_coef = math.exp(-(10000/(iter+1)))
-            dist_coef = 0.6*math.exp(-(10000/(iter+1)))
+
+            classif_coef = args.lamba_class*math.exp(-(10000/(iter+1)))
+            dist_coef = args.lamba_marginal*math.exp(-(10000/(iter+1)))
+            
+            #lossG = real/fake  + min(p, 1-p) + distance from marginals
             lossG = Gen_loss(args, g_out, g_fake) + classif_coef*classif_loss + dist_coef*dist_loss
             lossG.backward()
             optimG.step()
