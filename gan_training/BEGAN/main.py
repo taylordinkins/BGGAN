@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torchvision.utils import save_image
 
 import utils
-from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes
+from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes, BasicDiscriminator
 from dataloader import *
 
 import bayes_net
@@ -478,6 +478,7 @@ def train_acbegan(args):
             pathD = 'experiments/{}/models/netD_samples_ac.pt'.format(args.name)
             utils.save_model(pathG, netG, optimG)
             utils.save_model(pathD, netD, optimD)
+            print('args.k: ', args.k, '\n')
     
         iter += 1
 

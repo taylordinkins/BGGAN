@@ -185,6 +185,14 @@ class Discriminator(nn.Module):
     def forward(self, input, attrs):
         return self.dec(self.enc(input), attrs)
 
+class BasicDiscriminator(nn.Module):
+    def __init__(self, args):
+        super(Discriminator, self).__init__()
+        self.enc = Encoder(args)
+        self.dec = Decoder(args)
+    def forward(self, input, attrs):
+        return self.dec(self.enc(input))
+
 
 def weights_init(self, m):
     classname = m.__class__.__name__
