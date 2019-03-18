@@ -187,7 +187,7 @@ class Discriminator(nn.Module):
 
 class BasicDiscriminator(nn.Module):
     def __init__(self, args):
-        super(Discriminator, self).__init__()
+        super(BasicDiscriminator, self).__init__()
         self.enc = Encoder(args)
         self.dec = Decoder(args)
     def forward(self, input, attrs):
