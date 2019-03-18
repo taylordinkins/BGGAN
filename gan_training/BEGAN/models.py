@@ -190,7 +190,7 @@ class BasicDiscriminator(nn.Module):
         super(BasicDiscriminator, self).__init__()
         self.enc = Encoder(args)
         self.dec = Decoder(args)
-    def forward(self, input, attrs):
+    def forward(self, input):
         return self.dec(self.enc(input))
 
 
