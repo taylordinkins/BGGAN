@@ -108,7 +108,6 @@ class Encoder(nn.Module):
             nn.ELU(inplace=True),
         )
         self.linear1 = nn.Linear(8*8*3*self.nc, 64)
-        self.feat_score1 = nn.Linear(8*8*3*self.nc, 9)
 
         self.block5 = nn.Sequential(
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
@@ -123,7 +122,6 @@ class Encoder(nn.Module):
             nn.ELU(inplace=True),
         )
         self.linear2 = nn.Linear(8*8*4*self.nc, self.z)
-        self.feat_score2 = nn.Linear(8*8*4*self.nc, 9)
 
         
     def forward(self, input):
@@ -136,14 +134,12 @@ class Encoder(nn.Module):
         if self.scale == 64:
             x = self.block4(x)
             x = x.view(self.batch_size, 8*8*3*self.nc)
-            feat = self.feat_score1(x)
             x = self.linear1(x)
         else:
             x = self.block5(x)
             x = x.view(self.batch_size, 8*8*4*self.nc)
-            feat = self.feat_score2(x)
             x = F.elu(self.linear2(x), True)
-        return x, feat
+        return x
     
 class Discriminator(nn.Module):
     def __init__(self, args):
@@ -151,12 +147,12 @@ class Discriminator(nn.Module):
         self.enc = Encoder(args)
         self.dec = Generator(args, gen_feature=False)
 
-    def forward(self, input):#,attrs=None):
-        h, feat = self.enc(input)
+    def forward(self, input, attrs=None):
+        h = self.enc(input)
         #print(feat)
-        x = self.dec(h, feat)
-        #x = self.dec(h, attrs)
-        return x, feat
+        #x = self.dec(h, feat)
+        x = self.dec(h, attrs)
+        return x
 
 """
 class AttributeDetector(nn.Module):
