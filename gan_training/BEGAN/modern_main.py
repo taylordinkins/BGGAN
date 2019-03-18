@@ -9,11 +9,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
+from torch.distributions import Binomial, kl_divergence
 
 import utils
 from models import Generator, Discriminator
 from dataloader import *
-
+import bayes_net
+import datagen
 
 def load_args():
     parser = argparse.ArgumentParser()
@@ -29,7 +31,7 @@ def load_args():
     parser.add_argument('--scale', default=64, type=int)
     parser.add_argument('--name', default='test3')
     parser.add_argument('--base_path', default='./')
-    parser.add_argument('--data_path', default='../../../celeba/val/val')
+    parser.add_argument('--data_path', default='/home/npmhung/workspace/coursework/cs536/BGGAN/data/img_align_celeba')
     parser.add_argument('--load_step', default=0, type=int)
     parser.add_argument('--print_step', default=100, type=int)
     parser.add_argument('--resume_G', default=None)
@@ -83,8 +85,19 @@ def Disc_loss(args, d_real, data, d_fake, g_fake):
 def Gen_loss(args, g_out, g_fake):
     return (g_out - g_fake).abs().mean()
 
+def minus_entropy(x):
+    s = torch.sum(x, dim=0)
+    #print(s.shape)
+    x = x/s
+    #print(x.shape)
+    #print(x)
+    x = x*x.log()
+
+    return x.mean()
 
 def train(args):
+    graph = bayes_net.create_bayes_net()
+
     random.seed(8722)
     torch.manual_seed(4565)
     measure_history = deque([0]*3000, 3000)
@@ -95,7 +108,7 @@ def train(args):
     iters = args.load_step
     prepare_paths(args)
 
-    data_loader = get_loader(args.data_path, args.batch_size, args.scale, 0)
+    data_loader = datagen.load_celeba_50k_attrs(args)#get_loader(args.data_path, args.batch_size, args.scale, 0)
 
     z = torch.FloatTensor(args.batch_size, args.z).cuda()
     fixed_z = torch.FloatTensor(args.batch_size, args.z).cuda()
@@ -103,31 +116,55 @@ def train(args):
     fixed_x = None
     iter = 0
     (netG, optimG), (netD, optimD) = init_models(args)
+    BCE = nn.BCEWithLogitsLoss()
+    THRES = 0.5
     for i in range(args.epochs):
-        for _, data in enumerate(data_loader):
+        for ii, (data, _, real_atts) in enumerate(data_loader):
             if data.size(0) != args.batch_size:
                 continue
-            print (iter)
+            real_atts = torch.squeeze(real_atts>0).float().cuda()
             data = data.cuda()
             if fixed_x is None:
                 fixed_x = data
             z.data.uniform_(-1, 1).view(args.batch_size, args.z)
+            evidence = bayes_net.random_evidence()
+            #import pdb; print('Check marginal'); pdb.set_trace()
+            marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
             netD.zero_grad()
-            netG.zero_grad()
             with torch.no_grad():
-                g_fake = netG(z)
-            d_fake = netD(g_fake)
-            d_real = netD(data)
+                g_fake, g_feats = netG(z, marginals)
+                #g_feats = (F.sigmoid(g_feats)>0.5).float()
+            d_fake, d_fake_predfeat = netD(g_fake)
+            d_real, d_real_predfeat = netD(data)
            
             real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
+            d_class_loss = 10*BCE(d_real_predfeat, real_atts) + BCE(d_fake_predfeat, (g_feats.detach()>THRES).float())
+            if iter % 200 == 0:
+                print('D class_loss: ', d_class_loss, '\n' , 
+                (g_feats).float()[:10], '\n', 
+                (F.sigmoid(d_fake_predfeat)).float()[:10],
+                '\n', marginals[:1]); #pdb.set_trace()
             lossD = real_loss_d - args.k * fake_loss_d
-            lossD.backward()
+            (d_class_loss+lossD).backward()
             optimD.step()
-        
-            g_fake = netG(z)
-            g_out = netD(g_fake)
+            netG.zero_grad() 
+            evidence = bayes_net.random_evidence()
+            marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
+            g_fake, g_feats = netG(z, marginals)
+            g_out, g_predfeat = netD(g_fake)
+            
+            #classification loss
             lossG = Gen_loss(args, g_out, g_fake)
-            lossG.backward()
+            g_class_loss = BCE(g_predfeat, (g_feats.detach()>THRES).float())
+#            import pdb; print('G class_loss: ', g_class_loss); #pdb.set_trace()
+            # calculate kl divergence loss between generated batch and marginals
+            mu1 = torch.mean(g_feats, dim=0)
+            bin1 = Binomial(1, torch.clamp(mu1, 0.001, 0.999))
+            bin2 = Binomial(1, torch.clamp(marginals[0], 0.001, 0.999))# because marginals[0]=marginals[1]=...
+            kl_loss = 10*kl_divergence(bin1, bin2).mean()
+            #neg_entropy = 10*minus_entropy(g_feats)
+#            import pdb; print('KL_loss: ', float(kl_loss), mu1); pdb.set_trace()
+            (g_class_loss+kl_loss+lossG).backward()
             optimG.step()
             with torch.no_grad():
                 lagrangian = (args.gamma*real_loss_d - fake_loss_d)
@@ -136,9 +173,10 @@ def train(args):
             
                 convg_measure = real_loss_d.item() + lagrangian.abs()
                 measure_history.append(convg_measure)
-                if iters % args.print_step == 0:
-                    print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, i, 
+                if iter % args.print_step == 0:
+                    print ("Iter: {}, Epoch: {}, \nD loss: {}, G Loss: {}".format(iter, i, 
                         lossD.item(), lossG.item()))
+                    print("D class loss {} - G class loss {} - KL loss {}".format(d_class_loss, g_class_loss, kl_loss))
                     save_images(args, g_fake, d_real, iter)
                
                 """update training parameters"""

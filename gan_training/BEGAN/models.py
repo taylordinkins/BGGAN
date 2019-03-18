@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Generator(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, gen_feature=True):
         for k, v in vars(args).items():
             setattr(self, k, v)
         super(Generator, self).__init__()
@@ -35,6 +35,13 @@ class Generator(nn.Module):
             nn.ELU(inplace=True),
         )
         self.last_conv = nn.Conv2d(self.nc, 3, 3, 1, 1)
+        self.gen_feats = gen_feature
+        if gen_feature:
+           self.feat = nn.Sequential(nn.Linear(8*8*self.nc, 256),
+                                    nn.ReLU(),
+                                    nn.Linear(256, 9),
+                                    nn.Sigmoid())
+            
 
 
     def forward(self, input, marginals):
@@ -44,6 +51,8 @@ class Generator(nn.Module):
         x = torch.cat((x, x_m), 1)
         x = x.view(self.batch_size, self.nc, 8, 8)
         x = self.conv_block1(x)
+        if self.gen_feats:
+            feats = self.feat(x.contiguous().view(self.batch_size, -1))
         x = F.interpolate(x, scale_factor=2)
         x = self.conv_block2(x)
         x = F.interpolate(x, scale_factor=2)
@@ -52,6 +61,9 @@ class Generator(nn.Module):
         x = self.conv_block4(x)
         x = self.last_conv(x)
         x = torch.tanh(x)
+
+        if self.gen_feats:
+            return x, feats
         return x
 
 
@@ -96,6 +108,8 @@ class Encoder(nn.Module):
             nn.ELU(inplace=True),
         )
         self.linear1 = nn.Linear(8*8*3*self.nc, 64)
+        self.feat_score1 = nn.Linear(8*8*3*self.nc, 9)
+
         self.block5 = nn.Sequential(
             nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
             nn.ELU(inplace=True),
@@ -109,6 +123,7 @@ class Encoder(nn.Module):
             nn.ELU(inplace=True),
         )
         self.linear2 = nn.Linear(8*8*4*self.nc, self.z)
+        self.feat_score2 = nn.Linear(8*8*4*self.nc, 9)
 
         
     def forward(self, input):
@@ -121,23 +136,27 @@ class Encoder(nn.Module):
         if self.scale == 64:
             x = self.block4(x)
             x = x.view(self.batch_size, 8*8*3*self.nc)
+            feat = self.feat_score1(x)
             x = self.linear1(x)
         else:
             x = self.block5(x)
             x = x.view(self.batch_size, 8*8*4*self.nc)
+            feat = self.feat_score2(x)
             x = F.elu(self.linear2(x), True)
-        return x
+        return x, feat
     
 class Discriminator(nn.Module):
     def __init__(self, args):
         super(Discriminator, self).__init__()
         self.enc = Encoder(args)
-        self.dec = Generator(args)
+        self.dec = Generator(args, gen_feature=False)
 
-    def forward(self, input, attrs=None):
-        h = self.enc(input)
-        x = self.dec(h, attrs)
-        return x
+    def forward(self, input):#,attrs=None):
+        h, feat = self.enc(input)
+        #print(feat)
+        x = self.dec(h, feat)
+        #x = self.dec(h, attrs)
+        return x, feat
 
 """
 class AttributeDetector(nn.Module):

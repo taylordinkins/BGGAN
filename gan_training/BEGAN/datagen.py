@@ -10,7 +10,7 @@ from scipy.misc import imread,imresize
 from sklearn.model_selection import train_test_split
 from glob import glob
 
-ATTR_PATH = '../data/'
+ATTR_PATH = '/home/npmhung/workspace/coursework/cs536/BGGAN/data/'
 KEEP_ATTRS = ['FName', 'Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
 
 # get attributes as dataframe for all 200k images
@@ -153,7 +153,7 @@ def load_celeba_50k(args):
 def load_celeba_50k_attrs(args):
     torch.cuda.manual_seed(1)
     kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-    path = 'data_c/'
+    path = '/home/npmhung/workspace/coursework/cs536/BGGAN/data/'
     train_img_folder = ImageFolderWithPaths(path)
     train_loader = torch.utils.data.DataLoader(train_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
     return train_loader
