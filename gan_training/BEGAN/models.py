@@ -181,9 +181,9 @@ class Discriminator(nn.Module):
     def __init__(self, args):
         super(Discriminator, self).__init__()
         self.enc = Encoder(args)
-        self.dec = Decoder(args)
-    def forward(self, input):
-        return self.dec(self.enc(input))
+        self.dec = Generator(args)
+    def forward(self, input, attrs):
+        return self.dec(self.enc(input), attrs)
 
 
 def weights_init(self, m):
@@ -367,3 +367,90 @@ class AttributeDetector(nn.Module):
         output = output.view(output.size(0), -1)
         #print(output.shape)
         return output
+
+
+class EncoderWithAttributes(nn.Module):
+    def __init__(self, args):
+        for k, v in vars(args).items():
+            setattr(self, k, v)
+        super(EncoderWithAttributes, self).__init__()
+        self.block1 = nn.Sequential(
+            nn.Conv2d(3, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 1, 1, 0),
+        )
+        self.pool1 = nn.AvgPool2d(2, 2)
+
+        self.block2 = nn.Sequential(
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, 2*self.nc, 1, 1, 0),
+        )
+        self.pool2 = nn.AvgPool2d(2, 2)
+
+        self.block3 = nn.Sequential(
+            nn.Conv2d(2*self.nc, 2*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(2*self.nc, 2*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(2*self.nc, 3*self.nc, 1, 1, 0),
+        )
+        self.pool3 = nn.AvgPool2d(2, 2)
+        
+        self.block4 = nn.Sequential(
+            nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.linear1 = nn.Linear(8*8*3*self.nc, 64)
+        self.linear3 = nn.Linear(8*8*3*self.nc, 9)
+        self.block5 = nn.Sequential(
+            nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(3*self.nc, 3*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(3*self.nc, 4*self.nc, 1, 1, 0),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(4*self.nc, 4*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(4*self.nc, 4*self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.linear2 = nn.Linear(8*8*4*self.nc, self.z)
+        
+
+        
+    def forward(self, input):
+        x = self.block1(input)
+        x = self.pool1(x)
+        x = self.block2(x)
+        x = self.pool2(x)
+        x = self.block3(x)
+        x = self.pool3(x)
+        y = x
+        if self.scale == 64:
+            x = self.block4(x)
+            x = x.view(self.batch_size, 8*8*3*self.nc)
+            y = self.linear3(x)
+            x = self.linear1(x)
+        else:
+            x = self.block5(x)
+            x = x.view(self.batch_size, 8*8*4*self.nc)
+            x = F.elu(self.linear2(x), True)
+        return x, y
+
+class DiscriminatorWithAttributes(nn.Module):
+    def __init__(self, args):
+        super(DiscriminatorWithAttributes, self).__init__()
+        self.enc = EncoderWithAttributes(args)
+        self.dec = Decoder(args)
+    def forward(self, input):
+        enc_z, enc_y = self.enc(input)
+        return self.dec(enc_z), enc_y

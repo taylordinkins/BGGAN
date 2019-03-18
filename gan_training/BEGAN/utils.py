@@ -11,11 +11,30 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.distributions.multivariate_normal as N
 from torchvision.utils import save_image
+import torch.distributions.uniform as U
 
+# def sample_z(args, grad=True):
+#     z = torch.randn(args.batch_size, args.dim, requires_grad=grad).cuda()
+#     return z
 
-def sample_z(args, grad=True):
-    z = torch.randn(args.batch_size, args.dim, requires_grad=grad).cuda()
+def sample_z(D, shape, scale=1., grad=True):
+    z = scale * D.sample((shape)).cuda()
+    z.requires_grad = grad
     return z
+
+
+def create_normal(shape):
+    mean = torch.zeros(shape)
+    cov = torch.eye(shape)
+    D = N.MultivariateNormal(mean, cov)
+    return D
+
+
+def create_uniform(min, max):
+    min = torch.tensor([min]).float()
+    max = torch.tensor([max]).float()
+    D = U.Uniform(min, max)
+    return D
 
 
 def create_d(shape):
@@ -48,7 +67,6 @@ def save_model(path, model, optim):
 
 
 def load_model(args, model, optim, path):
-    path = model_dir + path
     ckpt = torch.load(path)
     model.load_state_dict(ckpt['state_dict'])
     optim.load_state_dict(ckpt['optimizer'])

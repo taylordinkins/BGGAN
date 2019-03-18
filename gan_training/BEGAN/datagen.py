@@ -10,7 +10,7 @@ from scipy.misc import imread,imresize
 from sklearn.model_selection import train_test_split
 from glob import glob
 
-ATTR_PATH = '../data/'
+ATTR_PATH = '../../data/'
 KEEP_ATTRS = ['FName', 'Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
 
 # get attributes as dataframe for all 200k images

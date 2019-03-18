@@ -11,10 +11,11 @@ import torch.nn.functional as F
 from torchvision.utils import save_image
 
 import utils
-from models import Generator, Discriminator, AttributeDetector
+from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes
 from dataloader import *
 
 import bayes_net
+import datagen
 
 
 def load_args():
@@ -39,6 +40,7 @@ def load_args():
     parser.add_argument('--evidence_exp', default=None)
     parser.add_argument('--data_parallel', default=None)
     parser.add_argument('--samples', default=None)
+    parser.add_argument('--acbegan', default=None)
     args = parser.parse_args()
     return args
 
@@ -53,6 +55,13 @@ def prepare_paths(args):
     print("Generated samples saved in {}".format(sample_path))
     return
 
+def inf_gen_attrs(data_gen):
+    while True:
+        for images, targets, img_attrs in data_gen:
+            images.requires_grad_(True)
+            images = images.cuda()
+            #img_attrs[img_attrs==-1] = 0
+            yield (images, targets, img_attrs)
 
 def init_models(args):
     netG = Generator(args).cuda()
@@ -64,9 +73,11 @@ def init_models(args):
 
     str = 'experiments/{}/models/'.format(args.name)
     if args.resume_G is not None:
-        netG, optimG = utils.load_model(netG, optimG, str+args.resume_G)
+        print('Loading G...\n')
+        netG, optimG = utils.load_model(args, netG, optimG, str+args.resume_G)
     if args.resume_D is not None:
-        netD, optimD = utils.load_model(netG, optimD, str+args.resume_D)
+        print('Loading D...\n')
+        netD, optimD = utils.load_model(args, netD, optimD, str+args.resume_D)
     return (netG, optimG), (netD, optimD)
 
 
@@ -75,6 +86,14 @@ def save_images(args, sample, recon, step, nrow=8):
     save_image(sample, save_path, nrow=nrow, normalize=True)
     if recon is not None:
         save_path = 'experiments/{}/{}_disc.png'.format(args.name, step)
+        save_image(recon, save_path, nrow=nrow, normalize=True)
+    return
+
+def save_images_samples(args, sample, recon, step, nrow=8):
+    save_path = 'experiments/{}/{}_gen_sample.png'.format(args.name, step)
+    save_image(sample, save_path, nrow=nrow, normalize=True)
+    if recon is not None:
+        save_path = 'experiments/{}/{}_disc_sample.png'.format(args.name, step)
         save_image(recon, save_path, nrow=nrow, normalize=True)
     return
 
@@ -109,6 +128,7 @@ def weights_init(m):
             nn.init.xavier_uniform_(m.weight.data)
         if m.bias is not None:
             nn.init.constant_(m.bias, 0.0)
+
 
 def evidence_test(args):
     torch.manual_seed(8734)
@@ -151,7 +171,7 @@ def evidence_test(args):
 
 
 def train(args):
-    random.seed(8722)
+    #random.seed(8722)
     torch.manual_seed(42)
     measure_history = deque([0]*3000, 3000)
     convergence_history = []
@@ -170,9 +190,11 @@ def train(args):
     iter = 0
     (netG, optimG), (netD, optimD) = init_models(args)
 
-    print('Initializing weights...\n')
-    netG.apply(weights_init)
-    netD.apply(weights_init)
+    if args.resume_G is None:
+        print('Initializing weights...\n')
+        netG.apply(weights_init)
+        netD.apply(weights_init)
+
     graph = bayes_net.create_bayes_net()
     bce_loss = nn.BCEWithLogitsLoss()
     mse_loss = nn.MSELoss()
@@ -216,7 +238,7 @@ def train(args):
             g_attrs = torch.round(g_attrs).mean(0)
             dist_loss = mse_loss(g_attrs, marginals[0])
             classif_coef = math.exp(-(10000/(iter+1)))
-            dist_coef = math.exp(-(8000/(iter+1)))
+            dist_coef = 0.6*math.exp(-(10000/(iter+1)))
             lossG = Gen_loss(args, g_out, g_fake) + classif_coef*classif_loss + dist_coef*dist_loss
             lossG.backward()
             optimG.step()
@@ -255,31 +277,38 @@ def train(args):
             iter += 1
 
 def train_samples(args):
-    random.seed(8722)
+    #random.seed(8722)
     torch.manual_seed(42)
     measure_history = deque([0]*3000, 3000)
     convergence_history = []
     prev_measure = 1
     
-    fdet = load_feature_detector(args)
+    #fdet = load_feature_detector(args)
     graph = bayes_net.create_bayes_net()
-    evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
+    #evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
 
-    bce_loss = torch.nn.BCEWithLogitsLoss()
+    #bce_loss = torch.nn.BCEWithLogitsLoss()
 
     lr = args.lr
     iters = args.load_step
     prepare_paths(args)
     u_dist = utils.create_uniform(-1, 1)
-    data_loader = datagen.load_celeba_50k(args)
+    data_loader = datagen.load_celeba_50k_train(args)
+    train_loader = inf_gen_attrs(data_loader)
     fixed_z = utils.sample_z(u_dist, (args.batch_size, args.z))
     iter = 0
     (netG, optimG), (netD, optimD) = init_models(args)
-    print('Initializing weights...\n')
-    netG.apply(weights_init)
-    netD.apply(weights_init)
-    for i in range(args.epochs):
-        for i, (data, _) in enumerate(data_loader):
+    if args.resume_G is None:
+        print('Initializing weights...\n')
+        netG.apply(weights_init)
+        netD.apply(weights_init)
+    for i in range(200000):
+        for p in netD.parameters():
+                p.requires_grad = True
+        for j in range(2):
+            print('Epoch: ', i, 'Disc iter: ', j)
+            data, _, attrs = next(train_loader)
+            attrs = attrs.squeeze().float().cuda().requires_grad_(True)
             data = data.cuda()
             z = utils.sample_z(u_dist, (args.batch_size, args.z))       
             z = z.view(args.batch_size, args.z)
@@ -287,63 +316,170 @@ def train_samples(args):
             marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence))
             mdist = torch.distributions.Bernoulli(marginals)
             attr_samples = mdist.sample().cuda().requires_grad_(True)
+
             netD.zero_grad()
             with torch.no_grad():
                 g_fake = netG(z, attr_samples)
-            d_fake = netD(g_fake)
-            d_real = netD(data)
+            d_fake = netD(g_fake, attr_samples)
+            d_real = netD(data, attrs)
            
             real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
             lossD = real_loss_d - args.k * fake_loss_d
             lossD.backward()
             optimD.step()
             
+        for p in netD.parameters():
+            p.requires_grad = False
 
+        z = utils.sample_z(u_dist, (args.batch_size, args.z))       
+        z = z.view(args.batch_size, args.z)
+        evidence = bayes_net.random_evidence()
+        marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence))
+        mdist = torch.distributions.Bernoulli(marginals)
+        attr_samples = mdist.sample().cuda().requires_grad_(True)
+        
+        netG.zero_grad()
+        g_fake = netG(z, attr_samples)
+        g_out = netD(g_fake, attr_samples)
+        lossG = Gen_loss(args, g_out, g_fake)
+        lossG.backward()
+        optimG.step()
+
+        lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
+        args.k += args.lambda_k * lagrangian
+        args.k = max(min(1, args.k), 0)
+    
+        convg_measure = real_loss_d.item() + lagrangian.abs()
+        measure_history.append(convg_measure)
+       
+        """update training parameters"""
+        lr = args.lr * 0.95 ** (iter//3000)
+
+        for p in optimG.param_groups + optimD.param_groups:
+            p['lr'] = lr
+
+        if iter % 5 == 0:
+            print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, i, 
+                lossD.item(), lossG.item()))
+        
+        if iter % 250 == 0:
+            print('Saving images...\n')
+            save_images_samples(args, g_fake.detach(), d_real.detach(), iter)
+
+        if iter % 500 == 0 and iter > 0:
+            pathG = 'experiments/{}/models/netG_samples.pt'.format(args.name)
+            pathD = 'experiments/{}/models/netD_samples.pt'.format(args.name)
+            utils.save_model(pathG, netG, optimG)
+            utils.save_model(pathD, netD, optimD)
+    
+        iter += 1
+
+# probably ignore this
+# likely a bad idea...
+def train_acbegan(args):
+    print('Testing ACBEGAN...\n')
+    #random.seed(8722)
+    torch.manual_seed(42)
+    measure_history = deque([0]*3000, 3000)
+    convergence_history = []
+    prev_measure = 1
+    
+    #fdet = load_feature_detector(args)
+    graph = bayes_net.create_bayes_net()
+    #evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
+
+    bce_loss = torch.nn.BCEWithLogitsLoss()
+
+    lr = args.lr
+    iters = args.load_step
+    prepare_paths(args)
+    u_dist = utils.create_uniform(-1, 1)
+    data_loader = datagen.load_celeba_50k_train(args)
+    train_loader = inf_gen_attrs(data_loader)
+    fixed_z = utils.sample_z(u_dist, (args.batch_size, args.z))
+    iter = 0
+    (netG, optimG), (netD, optimD) = init_models(args)
+    netD = DiscriminatorWithAttributes(args).cuda()
+    optimD = torch.optim.Adam(netD.parameters(), betas=(0.5, 0.999), lr=args.lr)
+    if args.resume_G is None:
+        print('Initializing weights...\n')
+        netG.apply(weights_init)
+        netD.apply(weights_init)
+    for i in range(200000):
+        # for i, (data, _, attrs) in enumerate(data_loader):
+        for j in range(2):
+            print('Epoch: ', i, 'Disc iter: ', j)
+            (data, _, attrs) = next(train_loader)
+            attrs = attrs.squeeze().float().cuda()
+            for p in netD.parameters():
+                p.requires_grad = True
+            data = data.cuda()
             z = utils.sample_z(u_dist, (args.batch_size, args.z))       
             z = z.view(args.batch_size, args.z)
             evidence = bayes_net.random_evidence()
             marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence))
             mdist = torch.distributions.Bernoulli(marginals)
             attr_samples = mdist.sample().cuda().requires_grad_(True)
-            
-            netG.zero_grad()
-            g_fake = netG(z, attr_samples)
-            g_out = netD(g_fake)
-            fake_preds = torch.sigmoid(fdet(fake))
-            g_attrs = bce_loss(fake_preds, attr_samples)
-            classif_coef = math.exp(-(4500/(iter+1)))
-            lossG = Gen_loss(args, g_out, g_fake) + classif_coef*g_attrs
-            lossG.backward()
-            optimG.step()
 
-            lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
-            args.k += args.lambda_k * lagrangian
-            args.k = max(min(1, args.k), 0)
-        
-            convg_measure = real_loss_d.item() + lagrangian.abs()
-            measure_history.append(convg_measure)
+            netD.zero_grad()
+            with torch.no_grad():
+                g_fake = netG(z, attr_samples)
+            d_fake, _ = netD(g_fake)
+            d_real, preds = netD(data)
            
-            """update training parameters"""
-            lr = args.lr * 0.95 ** (iter//3000)
- 
-            for p in optimG.param_groups + optimD.param_groups:
-                p['lr'] = lr
+            real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
+            d_bce = bce_loss(preds, attrs)
+            lossD = real_loss_d - args.k * fake_loss_d + d_bce
+            lossD.backward()
+            optimD.step()
 
-            if iter % 10 == 0:
-                print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, i, 
-                    lossD.item(), lossG.item()))
-            
-            if iter % 50 == 0:
-                print('Saving images...\n')
-                save_images(args, g_fake.detach(), d_real.detach(), iter)
-
-            if iter % 1000 == 0:
-                pathG = 'experiments/{}/models/netG_samples.pt'.format(args.name)
-                pathD = 'experiments/{}/models/netD_samples.pt'.format(args.name)
-                utils.save_model(pathG, netG, optimG)
-                utils.save_model(pathD, netD, optimD)
+        for p in netD.parameters():
+            p.requires_grad = False
         
-            iter += 1
+        z = utils.sample_z(u_dist, (args.batch_size, args.z))       
+        z = z.view(args.batch_size, args.z)
+        evidence = bayes_net.random_evidence()
+        marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence))
+        mdist = torch.distributions.Bernoulli(marginals)
+        attr_samples = mdist.sample().cuda().requires_grad_(True)
+        
+        netG.zero_grad()
+        g_fake = netG(z, attr_samples)
+        g_out, fake_preds = netD(g_fake)
+        g_attrs = bce_loss(fake_preds, attr_samples)
+        classif_coef = math.exp(-(3000/(iter+1)))
+        lossG = Gen_loss(args, g_out, g_fake) + classif_coef*g_attrs
+        lossG.backward()
+        optimG.step()
+
+        lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
+        args.k += args.lambda_k * lagrangian
+        args.k = max(min(1, args.k), 0)
+    
+        convg_measure = real_loss_d.item() + lagrangian.abs()
+        measure_history.append(convg_measure)
+       
+        """update training parameters"""
+        lr = args.lr * 0.95 ** (iter//3000)
+
+        for p in optimG.param_groups + optimD.param_groups:
+            p['lr'] = lr
+
+        if iter % 5 == 0:
+            print ("\nIter: {}, Epoch: {}, D loss: {}, G Loss: {}, \nG attr: {}, D bce: {}".format(iter, i, 
+                lossD.item(), lossG.item(), g_attrs.item(), d_bce.item()))
+        
+        if iter % 250 == 0:
+            print('Saving images...\n')
+            save_images(args, g_fake.detach(), d_real.detach(), iter)
+
+        if iter % 500 == 0 and iter > 0:
+            pathG = 'experiments/{}/models/netG_samples_ac.pt'.format(args.name)
+            pathD = 'experiments/{}/models/netD_samples_ac.pt'.format(args.name)
+            utils.save_model(pathG, netG, optimG)
+            utils.save_model(pathD, netD, optimD)
+    
+        iter += 1
 
 
 
@@ -375,12 +511,15 @@ def generative_experiments(args):
 
 if __name__ == "__main__":
     args = load_args()
-    if args.evidence_exp:
+    if args.acbegan:
+        train_acbegan(args)
+    elif args.evidence_exp:
         args.resume_D = 1
         args.resume_G = 1
         evidence_test(args)
     else:
-        if samples:
+        if args.samples:
+            print('Training samples...\n')
             train_samples(args)
         else:
             train(args)
