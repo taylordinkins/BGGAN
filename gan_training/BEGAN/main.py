@@ -14,7 +14,7 @@ import utils
 import datagen
 import bayes_net as bn
 from models import Generator, Discriminator
-
+from preact_resnet import PreActResNet18 as PreActResNet
 
 def load_args():
     parser = argparse.ArgumentParser()
@@ -31,8 +31,7 @@ def load_args():
     parser.add_argument('--name', default='test4')
     parser.add_argument('--load_step', default=0, type=int)
     parser.add_argument('--print_step', default=100, type=int)
-    parser.add_argument('--resume_G', default=None)
-    parser.add_argument('--resume_D', default=None)
+    parser.add_argument('--resume', default=False)
     args = parser.parse_args()
     return args
 
@@ -51,17 +50,21 @@ def prepare_paths(args):
 def init_models(args):
     netG = Generator(args).cuda()
     netD = Discriminator(args).cuda()
+    netAC = PreActResNet().cuda()
     print (netG, netD)
 
     optimG = torch.optim.Adam(netG.parameters(), betas=(0.5, 0.999), lr=args.lr)
     optimD = torch.optim.Adam(netD.parameters(), betas=(0.5, 0.999), lr=args.lr)
+    optimAC = torch.optim.Adam(netAC.parameters(), betas=(0.5, 0.999), lr=args.lr)
 
-    str = 'experiments/{}/models/'.format(args.name)
-    if args.resume_G is not None:
-        netG, optimG = utils.load_model(netG, optimG, str+args.resume_G)
-    if args.resume_D is not None:
-        netD, optimD = utils.load_model(netG, optimD, str+args.resume_D)
-    return (netG, optimG), (netD, optimD)
+    if args.resume:
+        Gpath = 'experiments/{}/models/netG_{}.pt'.format(args.name, args.load_step)
+        Dpath = 'experiments/{}/models/netD_{}.pt'.format(args.name, args.load_step)
+        ACpath = 'experiments/{}/models/netAC_{}.pt'.format(args.name, args.load_step)
+        netG, optimG = utils.load_model(args, netG, optimG, Gpath)
+        netD, optimD = utils.load_model(args, netD, optimD, Dpath)
+        netAC, optimAC = utils.load_model(args, netAC, optimAC, ACpath)
+    return (netG, optimG), (netD, optimD), (netAC, optimAC)
 
 
 def save_images(args, sample, recon, step, nrow=8):
@@ -73,14 +76,11 @@ def save_images(args, sample, recon, step, nrow=8):
     return
 
 
-def Disc_loss(args, d_real, data, d_fake, g_fake):
-    real_loss_d = (d_real - data).abs().mean()
-    fake_loss_d = (d_fake - g_fake).abs().mean()
-    return (real_loss_d, fake_loss_d)
-        
-
-def Gen_loss(args, g_out, g_fake):
-    return (g_out - g_fake).abs().mean()
+def rand_marginals(args, graph):
+    evidence = bn.random_evidence()
+    marginals = bn.return_marginals(graph, args.batch_size, evidence)
+    marginals = torch.tensor(marginals).cuda()
+    return marginals
 
 
 def train(args):
@@ -92,43 +92,55 @@ def train(args):
     
     #fdet = utils.load_feature_detector(args)
     graph = bn.create_bayes_net()
-    evidence = bn.evidence_query(['Young', 'Glasses'], [1, 1])
-
     bce_loss = torch.nn.BCEWithLogitsLoss()
-
     lr = args.lr
     iters = args.load_step
     prepare_paths(args)
     u_dist = utils.create_uniform(-1, 1)
-    data_loader = datagen.load_celeba_50k(args)
+    data_loader = datagen.load_celeba_50k_attrs(args)
     fixed_z = utils.sample_z(u_dist, (args.batch_size, args.z))
+    (netG, optimG), (netD, optimD), (netAC, optimAC) = init_models(args)
     iter = 0
-    (netG, optimG), (netD, optimD) = init_models(args)
-    for i in range(args.epochs):
-        for i, (data, _) in enumerate(data_loader):
+    thresh = 0.5
+    for epoch in range(args.epochs):
+        for i, (data, _, attrs) in enumerate(data_loader):
             data = data.cuda()
+            attrs = torch.squeeze(attrs>0).float().cuda()
+            
+            for p in netD.parameters():
+                p.requires_grad = True
             z = utils.sample_z(u_dist, (args.batch_size, args.z))       
-            z = z.view(args.batch_size, args.z)
-            marginals = torch.tensor(utils.get_marginals(graph, args.batch_size))
-            mdist = torch.distributions.Bernoulli(marginals)
-            attr_samples = mdist.sample().cuda().requires_grad_(True)
+            marginals = rand_marginals(args, graph)
             netD.zero_grad()
             with torch.no_grad():
-                g_fake = netG(z, attr_samples)
-            d_fake = netD(g_fake, attr_samples)
-            d_real = netD(data, attr_samples)
-           
-            real_loss_d, fake_loss_d = Disc_loss(args, d_real, data, d_fake, g_fake)
+                g_fake = netG(z, marginals)
+            d_fake = netD(g_fake, marginals)
+            d_real = netD(data, attrs)
+          
+            real_loss_d = (d_real - data).abs().mean()
+            fake_loss_d = (d_fake - g_fake).abs().mean()
+
             lossD = real_loss_d - args.k * fake_loss_d
             lossD.backward()
             optimD.step()
         
-            netG.zero_grad()
-            g_fake = netG(z, attr_samples)
-            g_out = netD(g_fake, attr_samples)
-            lossG = Gen_loss(args, g_out, g_fake)
-            lossG.backward()
-            optimG.step()
+            for p in netD.parameters():
+                p.requires_grad = False
+            marginals = rand_marginals(args, graph)
+            netG.zero_grad(); netAC.zero_grad()
+            z = utils.sample_z(u_dist, (args.batch_size, args.z))       
+            g_fake = netG(z, marginals)
+            d_fake = netD(g_fake, marginals)
+            lossG = (d_fake - g_fake).abs().mean()
+            
+            ## Ok lets penalize distance from marginals
+            dist = netAC(g_fake)
+            dist_batch = dist.mean(0)
+            dist_loss = bce_loss(dist_batch, marginals[0]).mean()
+            loss_gac = dist_loss + lossG
+            
+            loss_gac.backward()
+            optimG.step(); optimAC.step()
 
             lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
             args.k += args.lambda_k * lagrangian
@@ -137,8 +149,8 @@ def train(args):
             convg_measure = real_loss_d.item() + lagrangian.abs()
             measure_history.append(convg_measure)
             if iter % args.print_step == 0:
-                print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}".format(iter, i, 
-                    lossD.item(), lossG.item()))
+                print ("Iter: {}, D loss: {}, G Loss: {}, AC loss: {}".format(iter,
+                       lossD.item(), lossG.item(), dist_loss.item()))
                 save_images(args, g_fake.detach(), d_real.detach(), iter)
            
             """update training parameters"""
@@ -150,9 +162,8 @@ def train(args):
             if iter % 1000 == 0:
                 pathG = 'experiments/{}/models/netG_{}.pt'.format(args.name, iter)
                 pathD = 'experiments/{}/models/netD_{}.pt'.format(args.name, iter)
-                utils.save_model(pathG, netG, optimG)
-                utils.save_model(pathD, netD, optimD)
-        
+                utils.save_model(pathG, netG, optimG, args.k)
+                utils.save_model(pathD, netD, optimD, args.k)
             iter += 1
 
 

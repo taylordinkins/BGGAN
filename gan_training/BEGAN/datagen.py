@@ -10,12 +10,12 @@ from scipy.misc import imread,imresize
 from sklearn.model_selection import train_test_split
 from glob import glob
 
-ATTR_PATH = '../data/'
+ATTR_PATH = '../data_c/'
 KEEP_ATTRS = ['FName', 'Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
 
 # get attributes as dataframe for all 200k images
 def get_attrs(path):
-    attrs = pd.read_csv(path+'list_attr_celeba.csv')
+    attrs = pd.read_csv(ATTR_PATH+'list_attr_celeba.csv')
     return attrs[KEEP_ATTRS]
 
 # custom ImageFolder so we can return the attributes
@@ -153,7 +153,7 @@ def load_celeba_50k(args):
 def load_celeba_50k_attrs(args):
     torch.cuda.manual_seed(1)
     kwargs = {'num_workers': 1, 'pin_memory': True, 'drop_last': True}
-    path = 'data_c/'
+    path = '../data_c/'
     train_img_folder = ImageFolderWithPaths(path)
     train_loader = torch.utils.data.DataLoader(train_img_folder, batch_size=args.batch_size, shuffle=True, **kwargs)
     return train_loader

@@ -37,7 +37,7 @@ def create_uniform(min, max):
 def sample_z(D, shape, scale=1., grad=True):
     z = scale * D.sample((shape)).cuda()
     z.requires_grad = grad
-    return z
+    return z.view(shape)
 
 
 def sample_z_like(shape, scale=1., grad=True):
@@ -49,10 +49,11 @@ def create_if_empty(path):
         os.makedirs(path)
 
 
-def save_model(path, model, optim):
+def save_model(path, model, optim, k):
     torch.save({
         'state_dict': model.state_dict(),
         'optimizer': optim.state_dict(),
+        'k': k,
         }, path)
 
 
@@ -61,6 +62,7 @@ def load_model(args, model, optim, path):
     ckpt = torch.load(path)
     model.load_state_dict(ckpt['state_dict'])
     optim.load_state_dict(ckpt['optimizer'])
+    args.k = ckpt['k']
     return model, optim
 
 

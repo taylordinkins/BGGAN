@@ -139,7 +139,7 @@ class Discriminator(nn.Module):
         x = self.dec(h, attrs)
         return x
 
-"""
+
 class AttributeDetector(nn.Module):
     def __init__(self, args):
         for k, v in vars(args).items():
@@ -166,7 +166,7 @@ class AttributeDetector(nn.Module):
         output = output.view(output.size(0), -1)
         #print(output.shape)
         return output
-"""
+
 
 def weights_init(self, m):
     classname = m.__class__.__name__
