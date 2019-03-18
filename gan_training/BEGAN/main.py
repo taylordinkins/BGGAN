@@ -189,6 +189,8 @@ def train(args):
     fixed_x = None
     iter = 0
     (netG, optimG), (netD, optimD) = init_models(args)
+    netD = BasicDiscriminator(args).cuda()
+    optimD = torch.optim.Adam(netD.parameters(), betas=(0.5, 0.999), lr=args.lr)
 
     if args.resume_G is None:
         print('Initializing weights...\n')
