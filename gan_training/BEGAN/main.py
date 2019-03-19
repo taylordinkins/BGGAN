@@ -4,6 +4,7 @@ import random
 import argparse
 import numpy as np
 from collections import deque
+from math import pi, sqrt
 
 import torch
 import torch.nn as nn
@@ -41,8 +42,8 @@ def load_args():
     parser.add_argument('--data_parallel', default=None)
     parser.add_argument('--samples', default=None)
     parser.add_argument('--acbegan', default=None)
-    parser.add_argument('--lamba_class', default=0.1, type=float)
-    parser.add_argument('--lamba_marginal', default=1.0, type=float)
+    parser.add_argument('--lambda_gauss', default=1.0, type=float)
+    parser.add_argument('--lambda_marginal', default=1.0, type=float)
     
     args = parser.parse_args()
     return args
@@ -141,7 +142,7 @@ def evidence_test(args):
     (netG, optimG), (netD, optimD) = init_models(args)
     fdet = load_feature_detector(args)
     graph = bayes_net.create_bayes_net()
-    evidence = bayes_net.evidence_query(['Young', 'Glasses'], [1, 1])
+    evidence = bayes_net.evidence_query(['Young', 'Eyeglasses'], [1, 1])
     marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
     z = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
     bce_loss = BCEWithLogitsLoss()
@@ -170,7 +171,12 @@ def evidence_test(args):
     save_images(args, g_fake, None, 'test')
 
 
-        
+# this x is a tensor
+def gaussian(x, std=0.1, mmean=0.5):
+
+    gauss = 1/(sqrt(2*pi)*std)*torch.exp(-0.5*((x - mmean)/std)**2)
+
+    return gauss
 
 
 def train(args):
@@ -241,12 +247,13 @@ def train(args):
             g_fake = netG(z, marginals)
             g_out = netD(g_fake)
             g_attrs = torch.sigmoid(fdet(g_fake))
-            classif_loss = torch.mean(torch.min(g_attrs, 1-g_attrs))
+            
+            classif_loss = gaussian(g_attrs).mean()
             g_attrs = torch.round(g_attrs).mean(0)
             dist_loss = mse_loss(g_attrs, marginals[0])
 
-            classif_coef = args.lamba_class*math.exp(-(10000/(iter+1)))
-            dist_coef = args.lamba_marginal*math.exp(-(10000/(iter+1)))
+            classif_coef = args.lambda_gauss*math.exp(-(5000/(iter+1)))
+            dist_coef = args.lambda_marginal*math.exp(-(5000/(iter+1)))
             
             #lossG = real/fake  + min(p, 1-p) + distance from marginals
             lossG = Gen_loss(args, g_out, g_fake) + classif_coef*classif_loss + dist_coef*dist_loss
@@ -271,6 +278,7 @@ def train(args):
             if iter % 10 == 0:
                 print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}, \nClass Loss: {}, Dist Loss: {}".format(iter, i, 
                     lossD.item(), lossG.item(), classif_loss.item(), dist_loss.item()))
+                print("Class Penalty: {}, Dist Penalty: {}".format(classif_coef*classif_loss.item(), dist_coef*dist_loss.item()))
                 print()
 
             if iter % 250 == 0:
@@ -417,7 +425,8 @@ def train_acbegan(args):
         netD.apply(weights_init)
     for i in range(200000):
         # for i, (data, _, attrs) in enumerate(data_loader):
-        for j in range(2):
+        # just 1 iteration is fine
+        for j in range(1):
             print('Epoch: ', i, 'Disc iter: ', j)
             (data, _, attrs) = next(train_loader)
             attrs = attrs.squeeze().float().cuda()
