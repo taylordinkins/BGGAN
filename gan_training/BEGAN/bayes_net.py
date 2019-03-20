@@ -92,10 +92,10 @@ def main():
 	graph = create_bayes_net()
 
 	## I'll make this args loading eventually...
-	#evidence = evidence_query(['Young', 'Smiling'], [0, 1])
+	evidence = evidence_query(['Male'], [1])
 
 	# randomize for training!
-	evidence = random_evidence()
+	#evidence = random_evidence()
 
 	targets = []
 	for val in KEEP_ATTS:

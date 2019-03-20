@@ -51,6 +51,59 @@ class Decoder(nn.Module):
         x = torch.tanh(x)
         return x
 
+class NGenerator(nn.Module):
+    def __init__(self, args):
+        for k, v in vars(args).items():
+            setattr(self, k, v)
+        super(NGenerator, self).__init__()
+
+        self.linear = nn.Linear(self.z, 8*8*self.nc-512)
+        self.linear_m = nn.Linear(9, 512)
+        self.conv_block1 = nn.Sequential(
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.conv_block2 = nn.Sequential(
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.conv_block3 = nn.Sequential(
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.conv_block4 = nn.Sequential(
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+            nn.Conv2d(self.nc, self.nc, 3, 1, 1),
+            nn.ELU(inplace=True),
+        )
+        self.last_conv = nn.Conv2d(self.nc, 3, 3, 1, 1)
+
+
+    def forward(self, input, marginals):
+        x = self.linear(input)
+        x = F.elu(x)
+        x_m = self.linear_m(marginals)
+        x = F.elu(x)
+        x = torch.cat((x, x_m), 1)
+        x = x.view(self.batch_size, self.nc, 8, 8)
+        x = self.conv_block1(x)
+        x = F.interpolate(x, scale_factor=2)
+        x = self.conv_block2(x)
+        x = F.interpolate(x, scale_factor=2)
+        x = self.conv_block3(x)
+        x = F.interpolate(x, scale_factor=2)
+        x = self.conv_block4(x)
+        x = self.last_conv(x)
+        x = torch.tanh(x)
+        return x
+
 
 class Generator(nn.Module):
     def __init__(self, args):

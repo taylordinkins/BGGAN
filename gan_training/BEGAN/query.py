@@ -12,7 +12,7 @@ from torchvision.utils import save_image
 
 
 import utils
-from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes, BasicDiscriminator
+from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes, BasicDiscriminator, NGenerator
 from dataloader import *
 
 import bayes_net
@@ -87,6 +87,8 @@ def init_models(args):
 
 def save_images(args, sample, recon, step, nrow=0):
     save_path = 'experiments/{}/{}_gen.png'.format(args.name, step)
+    print('Saving into ', save_path)
+    print(sample.shape)
     save_image(sample, save_path, nrow=nrow, normalize=True)
     if recon is not None:
         save_path = 'experiments/{}/{}_disc.png'.format(args.name, step)
@@ -152,20 +154,26 @@ def get_reals(args, evs_attrs, evs_vals):
 
 
 
-# CURRENTLY SET UP FOR SAMPLING EXPERIMENT
 def query(args):
     prepare_paths(args)
-    evs_attrs = ['Mustache', 'Bald']
-    evs_vals = [1, 0]
+    evs_attrs = ['Male', 'Smiling']
+    evs_vals = [1, 1]
+    # evs_attrs = ['Wearing_Lipstick', 'Young']
+    # evs_vals = [1,1]
 
     #get_reals(args, evs_attrs, evs_vals)
 
     evidence = bayes_net.evidence_query(evs_attrs, evs_vals)
     
-    (netG, optimG), (netD, optimD) = init_models(args)
-    load_part_model(netG, './model_backups/netG_samples.pt')
+    #(netG, optimG), (netD, optimD) = init_models(args)
+
+    # netG = NGenerator(args)
+    # netG.load_state_dict(torch.load('./model_backups/netG_90000.pt')['state_dict'])
+    netG = Generator(args)
+    netG.load_state_dict(torch.load('./model_backups/netG_samples.pt')['state_dict'])
+    netG = netG.cuda()
     graph = bayes_net.create_bayes_net()
-    fdet = load_feature_detector(args)
+    #fdet = load_feature_detector(args)
     
     total_gens = 0
     for j in range(2000//args.batch_size + 1):
@@ -176,20 +184,23 @@ def query(args):
             attr_samples = mdist.sample().cuda()
             with torch.no_grad():
                 g_fake = netG(z, attr_samples)
-                pred_feats = fdet(g_fake)
+                for i, gimg in enumerate(g_fake):
+                    save_images(args, gimg, None, total_gens)
+                    total_gens += 1
+                #save_images(args, g_fake, None, 0, 8)
+                #pred_feats = fdet(g_fake)
         else:
             with torch.no_grad():
-                g_fake = netG(z, attr_samples)
-                pred_feats = fdet(g_fake)
-        print('Marginals', marginals[0].cpu().detach().numpy())
-        preds_rnd = torch.round(torch.sigmoid(pred_feats)).mean(0).cpu().detach().numpy()
-        print('Preds', preds_rnd)
-        print('Subtract', marginals[0].cpu().detach().numpy() - preds_rnd)
-        print()
-        for i, gimg in enumerate(g_fake):
-            save_images(args, gimg, None, total_gens)
-            total_gens += 1
+                g_fake = netG(z, marginals)
+                
+                #pred_feats = fdet(g_fake)
+        # print('Marginals', marginals[0].cpu().detach().numpy())
+        # #preds_rnd = torch.round(torch.sigmoid(pred_feats)).mean(0).cpu().detach().numpy()
+        # print('Preds', preds_rnd)
+        # print('Subtract', marginals[0].cpu().detach().numpy() - preds_rnd)
+        
+        
     
 if __name__ == "__main__":
     args = load_args()
-    query(args)
+query(args)
