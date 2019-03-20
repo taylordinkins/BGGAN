@@ -78,7 +78,7 @@ def return_marginals(graph, batch_size, evidence):
     for i in range(batch_size):
         for val in KEEP_ATTS:
             if val not in targets:
-                df.loc[i, val] = 1
+                df.loc[i, val] = evidence[val]
                 #print(val, 1)
             else:
                 df.loc[i, val] = query[val].values[1]
