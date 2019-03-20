@@ -190,7 +190,8 @@ def train(args):
     iters = args.load_step
     prepare_paths(args)
 
-    data_loader = get_loader(args.data_path, args.batch_size, args.scale, 0)
+    data_loader = datagen.load_celeba_50k_train(args)
+    train_loader = inf_gen_attrs(data_loader)
 
     # z = torch.FloatTensor(args.batch_size, args.z).cuda()
     fixed_z = torch.FloatTensor(args.batch_size, args.z).cuda()
@@ -216,12 +217,15 @@ def train(args):
         netG = nn.DataParallel(netG)
         netD = nn.DataParallel(netD)
         fdet = nn.DataParallel(fdet)
-    for i in range(args.epochs):
-        for _, data in enumerate(data_loader):
-            if data.size(0) != args.batch_size:
-                continue
-            #print (iter)
+    for i in range(200000):
+        for p in netD.parameters():
+                p.requires_grad = True
+        for j in range(20):
+            print('Epoch: ', i, 'Disc iter: ', j)
+            data, _, attrs = next(train_loader)
+            attrs = attrs.squeeze().float().cuda().requires_grad_(True)
             data = data.cuda()
+
             if fixed_x is None:
                 fixed_x = data
             z = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
@@ -240,59 +244,62 @@ def train(args):
             lossD.backward()
             optimD.step()
             
-            z = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
-            evidence = bayes_net.random_evidence()
-            marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence), requires_grad=True).cuda()
+        for p in netD.parameters():
+            p.requires_grad = False
 
-            g_fake = netG(z, marginals)
-            g_out = netD(g_fake)
-            g_attrs = torch.sigmoid(fdet(g_fake))
-            
-            classif_loss = gaussian(g_attrs).mean()
-            g_attrs = torch.round(g_attrs).mean(0)
-            dist_loss = mse_loss(g_attrs, marginals[0])
+        z = torch.randn(args.batch_size, args.z, requires_grad=True).cuda()
+        evidence = bayes_net.random_evidence()
+        marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence), requires_grad=True).cuda()
 
-            classif_coef = args.lambda_gauss*math.exp(-(5000/(iter+1)))
-            dist_coef = args.lambda_marginal*math.exp(-(5000/(iter+1)))
-            
-            #lossG = real/fake  + min(p, 1-p) + distance from marginals
-            lossG = Gen_loss(args, g_out, g_fake) + classif_coef*classif_loss + dist_coef*dist_loss
-            lossG.backward()
-            optimG.step()
-            
-            lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
-            args.k += args.lambda_k * lagrangian
-            args.k = max(min(1, args.k), 0)
+        g_fake = netG(z, marginals)
+        g_out = netD(g_fake)
+        g_attrs = torch.sigmoid(fdet(g_fake))
         
-            convg_measure = real_loss_d.item() + lagrangian.abs()
-            measure_history.append(convg_measure)
+        classif_loss = gaussian(g_attrs).mean()
+        g_attrs = torch.round(g_attrs).mean(0)
+        dist_loss = mse_loss(g_attrs, marginals[0])
 
-            
-           
-            """update training parameters"""
-            lr = args.lr * 0.95 ** (iter//3000)
- 
-            for p in optimG.param_groups + optimD.param_groups:
-                p['lr'] = lr
-
-            if iter % 10 == 0:
-                print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}, \nClass Loss: {}, Dist Loss: {}".format(iter, i, 
-                    lossD.item(), lossG.item(), classif_loss.item(), dist_loss.item()))
-                print("Class Penalty: {}, Dist Penalty: {}".format(classif_coef*classif_loss.item(), dist_coef*dist_loss.item()))
-                print()
-
-            if iter % 250 == 0:
-                print('Saving images...\n')
-                save_images(args, g_fake.detach(), d_real.detach(), iter)
-
-            if iter % 1000 == 0 and iter > 0:
-                print('Saving models...\n')
-                pathG = 'experiments/{}/models/netG_began.pt'.format(args.name)
-                pathD = 'experiments/{}/models/netD_began.pt'.format(args.name)
-                utils.save_model(pathG, netG, optimG)
-                utils.save_model(pathD, netD, optimD)
+        classif_coef = args.lambda_gauss*math.exp(-(5000/(iter+1)))
+        dist_coef = args.lambda_marginal*math.exp(-(5000/(iter+1)))
         
-            iter += 1
+        #lossG = real/fake  + min(p, 1-p) + distance from marginals
+        lossG = Gen_loss(args, g_out, g_fake) + classif_coef*classif_loss + dist_coef*dist_loss
+        lossG.backward()
+        optimG.step()
+        
+        lagrangian = (args.gamma*real_loss_d - fake_loss_d).detach()
+        args.k += args.lambda_k * lagrangian
+        args.k = max(min(1, args.k), 0)
+    
+        convg_measure = real_loss_d.item() + lagrangian.abs()
+        measure_history.append(convg_measure)
+
+        
+       
+        """update training parameters"""
+        lr = args.lr * 0.95 ** (iter//3000)
+
+        for p in optimG.param_groups + optimD.param_groups:
+            p['lr'] = lr
+
+        if iter % 10 == 0:
+            print ("Iter: {}, Epoch: {}, D loss: {}, G Loss: {}, \nClass Loss: {}, Dist Loss: {}".format(iter, i, 
+                lossD.item(), lossG.item(), classif_loss.item(), dist_loss.item()))
+            print("Class Penalty: {}, Dist Penalty: {}".format(classif_coef*classif_loss.item(), dist_coef*dist_loss.item()))
+            print()
+
+        if iter % 250 == 0:
+            print('Saving images...\n')
+            save_images(args, g_fake.detach(), d_real.detach(), iter)
+
+        if iter % 1000 == 0 and iter > 0:
+            print('Saving models...\n')
+            pathG = 'experiments/{}/models/netG_began.pt'.format(args.name)
+            pathD = 'experiments/{}/models/netD_began.pt'.format(args.name)
+            utils.save_model(pathG, netG, optimG)
+            utils.save_model(pathD, netD, optimD)
+    
+        iter += 1
 
 def train_samples(args):
     #random.seed(8722)

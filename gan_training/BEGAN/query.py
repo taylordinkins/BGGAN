@@ -10,12 +10,28 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
 
+
 import utils
 from models import Generator, Discriminator, AttributeDetector, DiscriminatorWithAttributes, BasicDiscriminator
 from dataloader import *
 
 import bayes_net
 import datagen
+
+from enum import Enum
+
+KEEP_ATTRS = ['FName', 'Young', 'Male', 'Eyeglasses', 'Bald', 'Mustache', 'Smiling', 'Wearing_Lipstick', 'Mouth_Slightly_Open', 'Narrow_Eyes']
+
+class AttrEnum(Enum):
+    Young = 0
+    Male = 1
+    Eyeglasses = 2
+    Bald = 3
+    Mustache = 4
+    Smiling = 5
+    Wearing_Lipstick = 6
+    Mouth_Slightly_Open = 7
+    Narrow_Eyes = 8
 
 def load_args():
     parser = argparse.ArgumentParser()
@@ -36,6 +52,7 @@ def load_args():
     parser.add_argument('--print_step', default=100, type=int)
     parser.add_argument('--resume_G', default=None)
     parser.add_argument('--resume_D', default=None)
+    parser.add_argument('--sampling', default=None)
     args = parser.parse_args()
     return args
 
@@ -46,6 +63,7 @@ def prepare_paths(args):
     utils.create_if_empty('./experiments/{}/models'.format(args.name))
     utils.create_if_empty('./experiments/{}/samples'.format(args.name))
     utils.create_if_empty('./experiments/{}/params'.format(args.name))
+    utils.create_if_empty('./experiments/{}/'.format(args.name+'-reals'))
     sample_path = './experiments/{}/samples'.format(args.name)
     print("Generated samples saved in {}".format(sample_path))
     return
@@ -67,12 +85,17 @@ def init_models(args):
     return (netG, optimG), (netD, optimD)
 
 
-def save_images(args, sample, recon, step, nrow=8):
+def save_images(args, sample, recon, step, nrow=0):
     save_path = 'experiments/{}/{}_gen.png'.format(args.name, step)
     save_image(sample, save_path, nrow=nrow, normalize=True)
     if recon is not None:
         save_path = 'experiments/{}/{}_disc.png'.format(args.name, step)
         save_image(recon, save_path, nrow=nrow, normalize=True)
+    return
+
+def save_real_images(args, sample, step, nrow=0):
+    save_path = 'experiments/{}/{}_disc.png'.format(args.name+'-reals', step)
+    save_image(sample, save_path, nrow=nrow, normalize=True)
     return
 
 def load_part_model(model, path):
@@ -93,27 +116,79 @@ def load_feature_detector(args):
 
     return fdet
 
+def inf_gen_attrs(data_gen):
+    while True:
+        for images, targets, img_attrs in data_gen:
+            images.requires_grad_(True)
+            images = images.cuda()
+            #img_attrs[img_attrs==-1] = 0
+            yield (images, targets, img_attrs)
 
+def match_attrs(img_attrs, evs_attrs, evs_vals):
+    attrs = img_attrs.numpy()[0]
+    for i, evname in enumerate(evs_attrs):
+        # print(AttrEnum[evname].value)
+        # print(evs_vals)
+        if attrs[AttrEnum[evname].value] != evs_vals[i]:
+            return False
+
+    return True
+
+def get_reals(args, evs_attrs, evs_vals):
+    data_loader = datagen.load_celeba_50k_train(args)
+    count = 0
+    train_loader = inf_gen_attrs(data_loader)
+
+    while count < 2000:
+        imgs, _, img_attrs = next(train_loader)
+        for i, img in enumerate(imgs):
+            if match_attrs(img_attrs[i], evs_attrs, evs_vals):
+                save_real_images(args, img, count)
+                count += 1
+                print('Count:', count)
+
+    return
+
+
+
+
+# CURRENTLY SET UP FOR SAMPLING EXPERIMENT
 def query(args):
-    evidence = bayes_net.evidence_query(['Male'], [1])
     prepare_paths(args)
+    evs_attrs = ['Mustache', 'Bald']
+    evs_vals = [1, 0]
+
+    #get_reals(args, evs_attrs, evs_vals)
+
+    evidence = bayes_net.evidence_query(evs_attrs, evs_vals)
+    
     (netG, optimG), (netD, optimD) = init_models(args)
-    load_part_model(netG, '/nfs/guille/wong/wonglab2/netG_began.pt')
+    load_part_model(netG, './model_backups/netG_samples.pt')
     graph = bayes_net.create_bayes_net()
-    z = torch.randn(args.batch_size, args.z).cuda()
-    marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
     fdet = load_feature_detector(args)
     
-
-    with torch.no_grad():
-        g_fake= netG(z, marginals)
-        pred_feats = fdet(g_fake)
-    print('Marginals', marginals[0].cpu().detach().numpy())
-    preds_rnd = torch.round(torch.sigmoid(pred_feats)).mean(0).cpu().detach().numpy()
-    print('Preds', preds_rnd)
-    print('Subtract', marginals[0].cpu().detach().numpy() - preds_rnd)
-    print()
-    save_images(args, g_fake, None, 0)
+    total_gens = 0
+    for j in range(2000//args.batch_size + 1):
+        z = torch.randn(args.batch_size, args.z).cuda()
+        marginals = torch.tensor(bayes_net.return_marginals(graph, args.batch_size, evidence)).cuda()
+        if args.sampling:
+            mdist = torch.distributions.Bernoulli(marginals)
+            attr_samples = mdist.sample().cuda()
+            with torch.no_grad():
+                g_fake = netG(z, attr_samples)
+                pred_feats = fdet(g_fake)
+        else:
+            with torch.no_grad():
+                g_fake = netG(z, attr_samples)
+                pred_feats = fdet(g_fake)
+        print('Marginals', marginals[0].cpu().detach().numpy())
+        preds_rnd = torch.round(torch.sigmoid(pred_feats)).mean(0).cpu().detach().numpy()
+        print('Preds', preds_rnd)
+        print('Subtract', marginals[0].cpu().detach().numpy() - preds_rnd)
+        print()
+        for i, gimg in enumerate(g_fake):
+            save_images(args, gimg, None, total_gens)
+            total_gens += 1
     
 if __name__ == "__main__":
     args = load_args()
