@@ -10,11 +10,3 @@ As with all generative models, effective sampling is an open question. GANs may 
 Bayes Nets are a time-tested way to encode structure and relationships between different nodes (factors of variation). In the cases where humans can easily create the graph, i.e. what facial attributes should vary together, we propose using a trained Bayes Net as the input to a GAN. 
 
 (several development branches - master represents the recent experiment, but it's messy. To be cleaned if this looks promising)
-
-## Results
-
-WGAN with ResNet Generator and Discriminator
-
-![here](images/21k_steps_resnet.png)
-
-It just started training relax. 
