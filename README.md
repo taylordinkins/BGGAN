@@ -1,8 +1,6 @@
 # BNGAN
 Bayesian Network GAN
 
-(several development branches - master represents the recent experiment, but it's messy. To be cleaned if this progresses)
-
 ## Main Idea
 
 Generative adverarial networks have come a long way and reignited interest in unsupervised learning. No longer just used for Image Synthesis, GANs now are used for text generation, forward prediciton, autoencoding, data augmentation, classification, and many other tasks. 
@@ -11,6 +9,7 @@ As with all generative models, effective sampling is an open question. GANs may 
 
 Bayes Nets are a time-tested way to encode structure and relationships between different nodes (factors of variation). In the cases where humans can easily create the graph, i.e. what facial attributes should vary together, we propose using a trained Bayes Net as the input to a GAN. 
 
+(several development branches - master represents the recent experiment, but it's messy. To be cleaned if this looks promising)
 
 ## Results
 
